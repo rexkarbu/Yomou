@@ -7,6 +7,8 @@
     "client"
   ],
   "scripts": {
+    "dev": "npm run dev:server",
+    "check:contracts": "node scripts/check-contracts.mjs",
     "build:server": "npm run -w server build",
     "start:server": "npm run -w server start",
     "dev:server": "npm run -w server dev",

@@ -114,28 +114,34 @@ Berdasarkan inspeksi sistem berkas pada repositori `d:\project\yomou`:
 
 #### [FON-02] Definisi Kontrak Tipe Data Bersama (Shared Types Contract)
 * **Area**: Fondasi / Kontrak Data
-* **Status**: `TODO`
-* **Tujuan**: Menyediakan definisi tipe TypeScript terpusat yang menjadi acuan serialisasi backend dan deserialisasi frontend.
+* **Status**: `DONE`
+* **Tujuan**: Menyediakan definisi tipe TypeScript yang diselaraskan antara `server/` dan `client/` sebagai acuan serialisasi backend dan deserialisasi frontend melalui pemeriksaan konsistensi otomatis.
 * **Ruang Lingkup**:
   * Mendefinisikan tipe `ContentBlock` (`ParagraphBlock`, `HeadingBlock` level 1–6, `ImageBlock`, `SeparatorBlock`).
   * Mendefinisikan tipe `InlineSpan` dengan formatting flag (`bold`, `italic`, `underline`, `strikethrough`).
   * Mendefinisikan kontrak respons standar API envelope (`ApiResponse<T>`, `ApiError`, `ApiMeta`).
-  * Mendefinisikan tipe entitas novel (`NovelSummary`, `NovelDetail`, `ChapterSummary`, `ChapterDetail`).
+  * Mendefinisikan tipe entitas novel (`NovelSummary`, `NovelDetail`, `ChapterSummary`, `ChapterDetail`, `ChapterImage` tanpa `localFilePath`).
+  * Menyiapkan skrip pemeriksaan konsistensi kesetaraan kontrak (`scripts/check-contracts.mjs`).
 * **Dependensi**: `FON-01`.
 * **File/Area Terkait**:
-  * `server/src/types/blocks.ts` [Usulan]
-  * `server/src/types/novel.ts` [Usulan]
-  * `server/src/types/api.ts` [Usulan]
-  * `client/src/types/blocks.ts` [Usulan]
-  * `client/src/types/novel.ts` [Usulan]
-  * `client/src/types/api.ts` [Usulan]
+  * `server/src/types/blocks.ts` [Selesai]
+  * `server/src/types/novel.ts` [Selesai]
+  * `server/src/types/api.ts` [Selesai]
+  * `client/src/types/blocks.ts` [Selesai]
+  * `client/src/types/novel.ts` [Selesai]
+  * `client/src/types/api.ts` [Selesai]
+  * `scripts/check-contracts.mjs` [Selesai]
 * **Acceptance Criteria**:
-  * [ ] Tipe `HeadingBlock.level` didefinisikan secara ketat sebagai union `1 | 2 | 3 | 4 | 5 | 6`.
-  * [ ] Tipe `ImageBlock` mereferensikan `id` unik gambar di dalam bab.
-  * [ ] Tipe error mencakup kode error resmi `CHAPTER_EMPTY_CONTENT`, `PROVIDER_TIMEOUT`, dan `SCRAPER_PARSE_ERROR`.
+  * [x] Tipe `HeadingBlock.level` didefinisikan secara ketat sebagai union `1 | 2 | 3 | 4 | 5 | 6`.
+  * [x] Tipe `ImageBlock` mereferensikan `id` unik gambar di dalam bab.
+  * [x] Tipe error mencakup kode error resmi `CHAPTER_EMPTY_CONTENT`, `PROVIDER_TIMEOUT`, dan `SCRAPER_PARSE_ERROR`.
+  * [x] Tipe `ChapterImage` hanya mencakup `imageId`, `remoteUrl`, `alt?`, `caption?` (tanpa `localFilePath` yang dialihkan ke `FON-03`).
+  * [x] Terdapat skrip verifikasi kesetaraan kontrak server–client yang memvalidasi paritas tipe.
 * **Cara Verifikasi**:
-  * Jalankan `tsc --noEmit` di `server` dan `client` untuk memverifikasi validitas tipe data.
-* **Referensi Acuan**: [PRD.md: Seksi 7 & 8.1](file:///d:/project/yomou/docs/PRD.md).
+  * Jalankan `npm run check:contracts` (`node scripts/check-contracts.mjs`) untuk memvalidasi kesetaraan kontrak antara server dan client (perbedaan ekstensi `.js` pada server dinormalisasi).
+  * Jalankan `npm run -w server build` dan `npm run typecheck:client` (`tsc --noEmit`) untuk memverifikasi validitas tipe data.
+  * *Catatan Implementasi*: Definisi kontrak saat ini disalin/mirrored pada masing-masing workspace (`server/src/types/` dan `client/src/types/`) dengan pengujian konsistensi otomatis, bukan satu paket terpusat (*single shared package*).
+* **Referensi Acuan**: [PRD.md: Seksi 7 & 8.1, 8.3](file:///d:/project/yomou/docs/PRD.md).
 
 ---
 
