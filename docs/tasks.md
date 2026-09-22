@@ -147,25 +147,50 @@ Berdasarkan inspeksi sistem berkas pada repositori `d:\project\yomou`:
 
 #### [FON-03] Implementasi Modul Database SQLite & Filesystem Client
 * **Area**: Frontend
-* **Status**: `TODO`
+* **Status**: `IN_PROGRESS`
 * **Tujuan**: Membangun modul persistensi lokal menggunakan `expo-sqlite` dan `expo-file-system` dengan skema komposit lengkap.
 * **Ruang Lingkup**:
-  * Inisialisasi koneksi database SQLite lokal (`yomou.db`).
+  * Inisialisasi koneksi database SQLite lokal (`yomou.db`) dengan pencegahan concurrent init race dan error cleanup.
   * Eksekusi migration skema DDL: tabel `novels`, `chapters`, `chapter_images`, `chapter_reading_progress`, `download_queue`, dan `reader_settings`.
   * Implementasi pembuatan indeks: `idx_chapter_images_chapter`, `idx_reading_progress_novel`, dan `idx_download_queue_status`.
-  * Utilitas helper penyimpanan gambar cover dan ilustrasi bab ke direktori dokumen lokal via `expo-file-system`.
+  * Utilitas helper penyimpanan gambar cover dan ilustrasi bab ke direktori dokumen lokal via `expo-file-system` dengan skema encoding path bebas-tabrakan (`paths.ts`).
+  * Integrasi proses startup penyimpanan minimal pada `client/App.tsx`.
 * **Dependensi**: `FON-01`, `FON-02`.
 * **File/Area Terkait**:
-  * `client/src/services/storage/sqlite.ts` [Usulan]
-  * `client/src/services/storage/schema.ts` [Usulan]
-  * `client/src/services/storage/filesystem.ts` [Usulan]
+  * `client/src/services/storage/sqlite.ts` [Selesai]
+  * `client/src/services/storage/schema.ts` [Selesai]
+  * `client/src/services/storage/paths.ts` [Selesai]
+  * `client/src/services/storage/filesystem.ts` [Selesai]
+  * `client/src/services/storage/types.ts` [Selesai]
+  * `client/src/services/storage/index.ts` [Selesai]
+  * `client/App.tsx` [Selesai]
+  * `scripts/verify-sqlite-schema.mjs` [Selesai]
+  * `scripts/verify-filesystem-paths.mjs` [Selesai]
 * **Acceptance Criteria**:
-  * [ ] Tabel `chapters` memiliki Composite Primary Key `(novel_id, id)`.
-  * [ ] Tabel `chapter_images` memiliki Composite Primary Key `(novel_id, chapter_id, image_id)`.
-  * [ ] Tabel `chapter_reading_progress` memiliki Composite Primary Key `(novel_id, chapter_id)`.
-  * [ ] Direktori penyimpanan gambar lokal (`${documentDirectory}/covers/` dan `${documentDirectory}/chapters/`) otomatis dibuat jika belum ada.
+  * [x] Tabel `chapters` memiliki Composite Primary Key `(novel_id, id)`.
+  * [x] Tabel `chapter_images` memiliki Composite Primary Key `(novel_id, chapter_id, image_id)`.
+  * [x] Tabel `chapter_reading_progress` memiliki Composite Primary Key `(novel_id, chapter_id)`.
+  * [ ] Direktori penyimpanan gambar lokal (`${documentDirectory}/covers/` dan `${documentDirectory}/chapters/`) otomatis dibuat jika belum ada. *(Logika pembuatan direktori dan error handling terimplementasi dan lolos typecheck; verifikasi runtime di perangkat fisik/emulator Android tetap terbuka sampai perangkat/emulator tersedia)*.
 * **Cara Verifikasi**:
-  * Buat skrip uji unit lokal yang membuka database in-memory/test SQLite, menjalankan migration, dan memastikan `PRAGMA table_info` mengembalikan kolom dan composite PK yang sesuai.
+  * Jalankan `npm run test:sqlite` untuk memvalidasi:
+    1. Eksekusi DDL awal dan validasi composite PK via `PRAGMA table_info` pada in-memory SQLite Node.js.
+    2. Idempotensi DDL pada database in-memory yang telah terisi dataset relasional (memastikan data tidak hilang atau korup).
+    3. Pengujian terisolasi integritas `FOREIGN KEY ON DELETE CASCADE` pada in-memory SQLite Node.js.
+    4. Uji deterministik resolusi path string dan encoding URI transport (memvalidasi keunikan tuple, preservasi karakter underscore vs karakter pengganti, preservasi Unicode, titik, dan pencegahan directory traversal setelah 1x URI decoding).
+  * Jalankan `npm run check:contracts` untuk memastikan kontrak server–client tetap sinkron.
+  * Jalankan `npm run typecheck:client` (`tsc --noEmit`) dan `npm run -w server build` untuk memverifikasi validitas tipe data statis.
+  * *Status Pengujian Otomatis yang Sudah Lulus*:
+    - `npm run test:sqlite`: DDL migrasi awal & composite PKs (`node:sqlite`).
+    - `npm run test:sqlite`: Idempotensi DDL pada database terisi data tanpa kehilangan baris/relasi.
+    - `npm run test:sqlite`: Foreign key `ON DELETE CASCADE` terisolasi.
+    - `npm run test:sqlite`: Resolusi path bebas-tabrakan, validasi segmen/ekstensi, dan preservasi nama file setelah 1x URI decoding Android.
+    - `npm run check:contracts`: Paritas kontrak tipe server–client 100% sinkron.
+    - `npm run typecheck:client`: Pemeriksaan tipe statis TypeScript client lolos tanpa galat.
+    - `npm run -w server build`: Kompilasi build backend TypeScript lolos tanpa galat.
+  * *Batas Verifikasi Runtime & Kendala Lingkungan*:
+    - **Kendala Lingkungan**: `adb` dan Android SDK tidak tersedia/terdaftar pada lokasi yang diperiksa (`PATH` sistem dan direktori default `AppData\Local\Android\Sdk`). Emulator tidak dipasang dan konfigurasi sistem tidak diubah tanpa arahan.
+    - **Smoke Test Android Belum Dijalankan**: Pengujian runtime native di Android (pembuatan direktori fisik `${documentDirectory}/covers/` dan `${documentDirectory}/chapters/`, persistensi data SQLite saat cold restart, isolasi file dua tuple ID bebas-tabrakan, dan penghapusan independen) belum dijalankan.
+    - **Status Tugas**: Kriteria direktori otomatis dibuat di perangkat Android belum dicentang, dan status `FON-03` dipertahankan **`IN_PROGRESS`** sampai pengujian runtime di perangkat/emulator Android selesai.
 * **Referensi Acuan**: [PRD.md: Seksi 6](file:///d:/project/yomou/docs/PRD.md).
 
 ---

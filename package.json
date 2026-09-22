@@ -14,6 +14,7 @@
     "dev:server": "npm run -w server dev",
     "start:client": "npm run -w client start",
     "android:client": "npm run -w client android",
-    "typecheck:client": "npm run -w client typecheck"
+    "typecheck:client": "npm run -w client typecheck",
+    "test:sqlite": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/verify-sqlite-schema.mjs && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/verify-filesystem-paths.mjs"
   }
 }
