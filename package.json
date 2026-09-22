@@ -1,0 +1,17 @@
+{
+  "name": "yomou-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "build:server": "npm run -w server build",
+    "start:server": "npm run -w server start",
+    "dev:server": "npm run -w server dev",
+    "start:client": "npm run -w client start",
+    "android:client": "npm run -w client android",
+    "typecheck:client": "npm run -w client typecheck"
+  }
+}
