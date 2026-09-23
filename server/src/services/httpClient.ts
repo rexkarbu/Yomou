@@ -40,6 +40,7 @@ export interface HttpResponse<T = string> {
   data: T;
   status: number;
   headers: Record<string, string | string[]>;
+  finalUrl?: string;
 }
 
 export const DEFAULT_USER_AGENT =
@@ -78,6 +79,10 @@ const RETRIABLE_HTTP_STATUSES = new Set([429, 500, 502, 503, 504]);
  * Checks if an error is retriable (network connection drop, timeout, or 5xx / 429)
  */
 export function isRetriableError(error: unknown): boolean {
+  if (error instanceof Error && error.message && error.message.toLowerCase().includes('cross-origin redirect rejected')) {
+    return false;
+  }
+
   if (!isAxiosError(error)) {
     return false;
   }
@@ -178,6 +183,10 @@ export function mapAxiosErrorToProviderError(
       504,
       { url, attempts, totalTimeoutMs, perAttemptTimeoutMs }
     );
+  }
+
+  if (error instanceof Error && error.message && error.message.toLowerCase().includes('cross-origin redirect rejected')) {
+    return new ProviderError('SCRAPER_PARSE_ERROR', error.message, 500, { url });
   }
 
   if (isAxiosError(error)) {
@@ -332,10 +341,16 @@ export class ResilientHttpClient {
             signal: attemptController.signal,
           });
 
+          const finalUrl =
+            (response.request as any)?.res?.responseUrl ??
+            (response.request as any)?.responseURL ??
+            url;
+
           return {
             data: response.data,
             status: response.status,
             headers: response.headers as Record<string, string | string[]>,
+            finalUrl,
           };
         } catch (error: unknown) {
           overallController.signal.removeEventListener('abort', onOverallAbort);

@@ -10,7 +10,9 @@
     "test:provider-feeds": "node ../scripts/verify-meionovel-scraper.mjs",
     "test:provider-feeds:live": "node ../scripts/verify-meionovel-scraper.mjs --live",
     "test:provider-details": "node ../scripts/verify-meionovel-details.mjs",
-    "test:provider-details:live": "node ../scripts/verify-meionovel-details.mjs --live"
+    "test:provider-details:live": "node ../scripts/verify-meionovel-details.mjs --live",
+    "test:chapter-content": "node ../scripts/verify-chapter-content.mjs",
+    "test:chapter-content:live": "node ../scripts/verify-chapter-content.mjs --live"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.8",

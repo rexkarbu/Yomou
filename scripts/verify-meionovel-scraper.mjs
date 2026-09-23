@@ -293,21 +293,20 @@ console.log('--- 5. Testing Provider Contract & Unimplemented Boundaries ---');
 assert.strictEqual(meionovelProvider.name, 'meionovel');
 assert.strictEqual(meionovelProvider.baseUrl, 'https://meionovels.com');
 
-// Note: search() and getNovelDetails() are now implemented in BE-03.
-// Boundary test for unimplemented methods: getChapterContent() must throw 501 NOT_IMPLEMENTED (BE-04)
+// Note: search(), getNovelDetails(), and getChapterContent() are now implemented (BE-02..BE-04).
+assert.strictEqual(typeof meionovelProvider.getChapterContent, 'function', 'getChapterContent must be implemented');
 
-// Test getChapterContent() throws 501 NOT_IMPLEMENTED
+// Test getChapterContent() input validation rejects invalid slug
 let chapterErr = null;
 try {
-  await meionovelProvider.getChapterContent('btth', 'ch-1');
+  await meionovelProvider.getChapterContent('btth', '../invalid-traversal');
 } catch (err) {
   chapterErr = err;
 }
 assert(chapterErr instanceof ProviderError);
-assert.strictEqual(chapterErr.status, 501, 'getChapterContent() must throw 501 NOT_IMPLEMENTED');
-assert(chapterErr.message.includes('BE-04'), 'Error message must note scheduling in BE-04');
+assert.strictEqual(chapterErr.status, 400, 'getChapterContent() must reject invalid slug with 400 BAD_REQUEST');
 
-console.log('✔ Unimplemented methods strictly throw 501 without faking successful responses\n');
+console.log('✔ Provider methods strictly implemented and input validation verified\n');
 
 // ---------------------------------------------------------------------------
 // 6. Live Smoke Testing (Only run if --live flag is passed)

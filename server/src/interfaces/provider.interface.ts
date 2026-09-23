@@ -40,6 +40,11 @@ export interface INovelProvider {
    * Mengambil isi bab novel yang telah disanitasi menjadi ContentBlock[]
    * @param novelId Slug unik novel
    * @param chapterId Slug unik bab (misal: 'volume-4-chapter-14')
+   * @param options Opsional konfigurasi timeout (misal: sisa deadline total)
    */
-  getChapterContent(novelId: string, chapterId: string): Promise<ChapterDetail>;
+  getChapterContent(
+    novelId: string,
+    chapterId: string,
+    options?: { totalTimeoutMs?: number }
+  ): Promise<ChapterDetail>;
 }

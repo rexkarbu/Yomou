@@ -495,17 +495,18 @@ console.log('--- 6. Testing Provider Contract & Unimplemented Boundaries ---');
 assert.strictEqual(meionovelProvider.name, 'meionovel');
 assert.strictEqual(meionovelProvider.baseUrl, 'https://meionovels.com');
 
-// getChapterContent() must throw 501 NOT_IMPLEMENTED (scheduled for BE-04)
+// getChapterContent() is now implemented in BE-04
+assert.strictEqual(typeof meionovelProvider.getChapterContent, 'function', 'getChapterContent must be implemented');
+
 let chapterContentErr = null;
 try {
-  await meionovelProvider.getChapterContent('kimi-wa-boku-no-koukai-ln', 'volume-1-chapter-1');
+  await meionovelProvider.getChapterContent('kimi-wa-boku-no-koukai-ln', '../volume-1-chapter-1');
 } catch (err) {
   chapterContentErr = err;
 }
 assert(chapterContentErr instanceof ProviderError);
-assert.strictEqual(chapterContentErr.status, 501, 'getChapterContent() must throw 501 NOT_IMPLEMENTED');
-assert(chapterContentErr.message.includes('BE-04'), 'Error message must note scheduling in BE-04');
-console.log('✔ getChapterContent() strictly throws 501 NOT_IMPLEMENTED (BE-04 boundary verified)\n');
+assert.strictEqual(chapterContentErr.status, 400, 'getChapterContent() must reject invalid slug with 400 BAD_REQUEST');
+console.log('✔ getChapterContent() implemented and input validation verified\n');
 
 // ---------------------------------------------------------------------------
 // 7. Live Smoke Testing (Only run if --live flag is passed)

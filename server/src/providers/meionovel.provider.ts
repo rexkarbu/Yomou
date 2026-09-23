@@ -13,6 +13,10 @@ import {
   parseNovelMetadata,
   parseNovelChapters,
   validateNovelSlug,
+  validateChapterSlug,
+  extractNovelSlug,
+  extractChapterSlug,
+  extractChapterContent,
 } from '../utils/parser.js';
 import { ProviderError } from '../errors/provider.error.js';
 import * as cheerio from 'cheerio';
@@ -133,14 +137,104 @@ export class MeionovelProvider implements INovelProvider {
 
   /**
    * Mengambil isi bab novel yang telah disanitasi menjadi ContentBlock[]
-   * Catatan: Dijadwalkan pada BE-04.
+   * Strictly compliant with PRD Section 3.1, 7, 8.3 & SLA-NAV-03
    */
-  async getChapterContent(novelId: string, chapterId: string): Promise<ChapterDetail> {
-    throw new ProviderError(
-      'INTERNAL_SERVER_ERROR',
-      `Method getChapterContent() is not yet implemented (scheduled for BE-04): novelId="${novelId}", chapterId="${chapterId}"`,
-      501
-    );
+  async getChapterContent(
+    novelId: string,
+    chapterId: string,
+    options?: { totalTimeoutMs?: number }
+  ): Promise<ChapterDetail> {
+    const validNovelId = validateNovelSlug(novelId);
+    const validChapterId = validateChapterSlug(chapterId);
+
+    const totalTimeoutMs = options?.totalTimeoutMs ?? 8000;
+    const baseOrigin = new URL(this.baseUrl).origin.toLowerCase();
+
+    // Preserves canonical subpaths (e.g. 'mtl/chapter-1') without mutating input
+    const chapterUrl = `${this.baseUrl}/novel/${validNovelId}/${validChapterId}/`;
+
+    const response = await this.client.get<string>(chapterUrl, {
+      totalTimeoutMs,
+      headers: {
+        Referer: `${this.baseUrl}/novel/${validNovelId}/`,
+      },
+      beforeRedirect: (redirectOptions: Record<string, any>) => {
+        const targetOrigin = `${redirectOptions.protocol || 'https:'}//${redirectOptions.hostname}${
+          redirectOptions.port ? `:${redirectOptions.port}` : ''
+        }`.toLowerCase();
+
+        if (targetOrigin !== baseOrigin) {
+          throw new ProviderError(
+            'SCRAPER_PARSE_ERROR',
+            `Cross-origin redirect rejected: "${targetOrigin}" does not match "${baseOrigin}"`,
+            500,
+            { url: chapterUrl, targetOrigin }
+          );
+        }
+      },
+    });
+
+    // Validate final URL and identity of requested chapter
+    if (response.finalUrl) {
+      let finalParsed: URL;
+      try {
+        finalParsed = new URL(response.finalUrl);
+      } catch {
+        throw new ProviderError(
+          'SCRAPER_PARSE_ERROR',
+          `Invalid final URL received from upstream: "${response.finalUrl}"`,
+          500
+        );
+      }
+
+      // Check origin
+      if (finalParsed.origin.toLowerCase() !== baseOrigin) {
+        throw new ProviderError(
+          'SCRAPER_PARSE_ERROR',
+          `Cross-origin final URL received: "${response.finalUrl}"`,
+          500
+        );
+      }
+
+      // Check if redirected to novel page or home page (soft-404)
+      const finalNovelSlug = extractNovelSlug(finalParsed.pathname);
+      const finalChapterSlug = extractChapterSlug(finalParsed.pathname, validNovelId);
+
+      if (finalNovelSlug === validNovelId && !finalChapterSlug) {
+        // Redirected to novel detail page without chapter segment -> chapter does not exist
+        throw new ProviderError(
+          'PROVIDER_NOT_FOUND',
+          `Chapter "${validChapterId}" not found for novel "${validNovelId}" (redirected to novel page)`,
+          404,
+          { novelId: validNovelId, chapterId: validChapterId, finalUrl: response.finalUrl }
+        );
+      }
+
+      if (finalNovelSlug !== validNovelId) {
+        throw new ProviderError(
+          'SCRAPER_PARSE_ERROR',
+          `Upstream redirected requested novel "${validNovelId}" to different novel "${finalNovelSlug}"`,
+          500,
+          { novelId: validNovelId, chapterId: validChapterId, finalUrl: response.finalUrl }
+        );
+      }
+
+      if (finalChapterSlug && finalChapterSlug !== validChapterId) {
+        throw new ProviderError(
+          'SCRAPER_PARSE_ERROR',
+          `Upstream redirected requested chapter "${validChapterId}" to different chapter "${finalChapterSlug}"`,
+          500,
+          { novelId: validNovelId, chapterId: validChapterId, finalUrl: response.finalUrl }
+        );
+      }
+    }
+
+    return extractChapterContent(response.data, {
+      novelId: validNovelId,
+      chapterId: validChapterId,
+      baseUrl: this.baseUrl,
+      chapterPageUrl: response.finalUrl || chapterUrl,
+    });
   }
 }
 

@@ -21,6 +21,8 @@
     "test:provider-feeds": "npm run -w server build && node scripts/verify-meionovel-scraper.mjs",
     "test:provider-feeds:live": "npm run -w server build && node scripts/verify-meionovel-scraper.mjs --live",
     "test:provider-details": "npm run -w server build && node scripts/verify-meionovel-details.mjs",
-    "test:provider-details:live": "npm run -w server build && node scripts/verify-meionovel-details.mjs --live"
+    "test:provider-details:live": "npm run -w server build && node scripts/verify-meionovel-details.mjs --live",
+    "test:chapter-content": "npm run -w server build && node scripts/verify-chapter-content.mjs",
+    "test:chapter-content:live": "npm run -w server build && node scripts/verify-chapter-content.mjs --live"
   }
 }

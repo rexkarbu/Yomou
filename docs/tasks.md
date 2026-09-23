@@ -429,27 +429,56 @@ Berdasarkan inspeksi sistem berkas pada repositori `d:\project\yomou`:
 
 #### [BE-04] Implementasi Sanitasi Konten & Konversi ke `ContentBlock[]`
 * **Area**: Backend
-* **Status**: `TODO`
-* **Tujuan**: Mengekstrak isi bab novel, membersihkan elemen iklan/skrip, dan mengonversinya menjadi array blok terstruktur (`ContentBlock[]`).
+* **Status**: `DONE`
+* **Tujuan**: Mengekstrak isi bab novel, membersihkan elemen iklan/skrip/promosi, dan mengonversinya menjadi array blok terstruktur (`ContentBlock[]`) dengan preservasi struktur DOM bersarang, konteks formatting, pemisahan navigasi sah vs rusak, dan penegakan batas performa 8 detik.
 * **Ruang Lingkup**:
-  * Metode `getChapterContent(novelId: string, chapterId: string)`.
-  * Membersihkan tag `<script>`, `<iframe>`, komentar Disqus, tautan promosi/saweria, dan div iklan.
-  * Mengonversi teks cerita menjadi `ParagraphBlock` dengan penekanan inline (`InlineSpan`: bold, italic).
-  * Mengonversi heading `<h1>`–`<h6>` menjadi `HeadingBlock` dengan level integer 1–6.
-  * Mengonversi ilustrasi cerita menjadi `ImageBlock` (dengan `id` unik per bab) dan mengisi array `images: Array<{ imageId, remoteUrl }>`.
-  * Mengonversi `<hr>` menjadi `SeparatorBlock`.
-  * Validasi bab kosong: jika total blok == 0, lemparkan galat terstruktur `CHAPTER_EMPTY_CONTENT`.
+  * Metode `getChapterContent(novelId: string, chapterId: string)` pada `MeionovelProvider`.
+  * Sanitasi DOM pembersih iklan: script, iframe, form, button, iklan Google/AdSense, komentar Disqus, kontainer donasi/promo khusus (`.donation-box`, `.promo-box`), dan unwrap tautan cerita aman.
+  * Sanitasi promosi berbasis pencocokan hostname presisi (`parsed.hostname === domain || parsed.hostname.endsWith('.' + domain)`), tidak menghapus parent hanya berdasarkan panjang teks, dan mempertahankan teks cerita serta gambar pada elemen campuran maupun tautan dengan nama promo pada query string.
+  * Traversal DOM berurutan (`walk(node, ctx)`) yang mempertahankan konteks formatting inline (`InlineSpan`: bold, italic, underline, strikethrough) tanpa meratakan wrapper berdasarkan ada/tidaknya gambar.
+  * Preservasi batas paragraf, heading 1–6 (`HeadingBlock`), separator (`SeparatorBlock`), dan gambar (`ImageBlock`) pada wrapper bersarang (`div`, `p`, `blockquote`, `section`, `article`, `figure`, `strong`, `span`).
+  * Konversi ilustrasi cerita menjadi `ImageBlock` (dengan ID unik `img_XX` per bab), dukungan atribut lazy loading (`data-src`, `data-lazy-src`, `data-original`), normalisasi URL relatif terhadap `chapterPageUrl`, dan pemetaan konsisten 1:1 ke array `images: ChapterImage[]`.
+  * Parser navigasi chapter: membedakan ketiadaan/disabled navigasi sah (`null`) dari URL navigasi rusak/berbahaya. Validasi origin, namespace novel, traversal literal/encoded (`..`, `%2e%2e`), dan ID kanonik. URL navigasi tidak valid melempar `SCRAPER_PARSE_ERROR` (500).
+  * Validasi bab kosong per PRD Seksi 3.1 & 7: melempar galat terstruktur `CHAPTER_EMPTY_CONTENT` (422) jika hasil sanitasi tidak memuat blok apa pun. Bab teks pendek (< 100 karakter) dan bab gambar saja diakui sah.
+  * Penegakan total deadline 8 detik (SLA-NAV-03), penolakan redirect lintas-origin via `beforeRedirect`, serta pemetaan soft-404 (redirect ke detail novel) menjadi `PROVIDER_NOT_FOUND` (404).
 * **Dependensi**: `BE-03`.
 * **File/Area Terkait**:
-  * `server/src/providers/meionovel.provider.ts` [Usulan]
-  * `server/src/utils/contentSanitizer.ts` [Usulan]
+  * `server/src/interfaces/provider.interface.ts` [Selesai]
+  * `server/src/providers/meionovel.provider.ts` [Selesai]
+  * `server/src/utils/contentSanitizer.ts` [Selesai]
+  * `server/src/utils/parser.ts` [Selesai]
+  * `server/src/services/httpClient.ts` [Selesai]
+  * `server/test/fixtures/` [Selesai - 10 fixture bab: chapter-kimi-vol1-ch1, chapter-btth-mtl-ch1, chapter-dom-order, chapter-lazy-images, chapter-short-text, chapter-image-only, chapter-empty, chapter-corrupted, chapter-404-novel-page, chapter-challenge]
+  * `scripts/verify-chapter-content.mjs` [Selesai]
+  * `package.json` & `server/package.json` [Selesai - script `test:chapter-content` dan `test:chapter-content:live`]
 * **Acceptance Criteria**:
-  * [ ] Hasil ekstraksi tidak memuat tag HTML mentah seperti `<script>`, `<div>`, atau class iklan.
-  * [ ] Teks berformat miring atau tebal dipetakan secara benar ke dalam array `spans`.
-  * [ ] Bab yang tidak memuat teks mengembalikan error `CHAPTER_EMPTY_CONTENT` (HTTP 422).
+  * [x] Traversal DOM berurutan mempertahankan urutan sumber, pemisahan blok paragraf, heading, separator, dan gambar bersarang tanpa perataan prematur wrapper.
+  * [x] Regresi DOM teruji: (a) `<div><p>A</p><h2>B</h2><hr><p>C</p></div>` menjaga batas paragraf, heading, dan separator; (b) `<p><strong>A<span><img src="..."></span>B</strong></p>` menghasilkan P(A, bold) -> Img -> P(B, bold); (c) `<figure><img src="..."></figure>` menghasilkan `ImageBlock`.
+  * [x] Sanitasi promosi mencocokkan hostname URL secara tepat (`parsed.hostname`), mempertahankan konten cerita pada parent campuran, meng-unwrap tautan cerita yang memuat nama domain promosi pada query string, dan hanya menghapus kontainer terbukti khusus donasi/promo.
+  * [x] Validasi navigasi membedakan navigasi sah yang kosong/disabled (`null`) dari URL rusak; URL relatif diresolusi terhadap `chapterPageUrl`; URL lintas origin, foreign novel, traversal literal/encoded `%2e%2e` melempar `SCRAPER_PARSE_ERROR` (500).
+  * [x] Bab kosong tanpa blok melempar `CHAPTER_EMPTY_CONTENT` (422); bab pendek (< 100 karakter) dan bab gambar saja diakui sah sesuai PRD.
+  * [x] Seluruh blok teks bebas dari tag HTML mentah (`<script>`, `<div>`, `<a>`, inline CSS) dan formatting inline terpetakan akurat ke `spans`.
+  * [x] Ilustrasi bab terpetakan konsisten 1:1 antara `ImageBlock.id` dan `ChapterImage.imageId`, mendukung lazy loading attributes (`data-src`, `data-lazy-src`), serta resolusi URL relatif ke absolut.
+  * [x] Total deadline 8 detik (SLA-NAV-03) dipaksakan pada operasi bab; redirect lintas origin ditolak seketika pada hook `beforeRedirect`; redirect soft-404 ke halaman detail novel menghasilkan `PROVIDER_NOT_FOUND` (404).
 * **Cara Verifikasi**:
-  * Uji scraping pada bab sampel riil `volume-4-chapter-14` dan verifikasi bahwa JSON `blocks` memuat array objek yang valid sesuai tipe `ContentBlock[]`.
-* **Referensi Acuan**: [PRD.md: Seksi 3.1, 7, 8.3](file:///d:/project/yomou/docs/PRD.md).
+  * Jalankan `npm run test:chapter-content` (`npm run -w server build && node scripts/verify-chapter-content.mjs`) untuk memvalidasi:
+    - Subtest 1: Validasi kanonik `chapterId` dan pencegahan traversal literal maupun percent-encoded (lolos).
+    - Subtest 2: Ekstraksi bab riil Kimi Vol 1 Ch 1 (90 blok, 2 gambar, prev/next chapter ID valid) (lolos).
+    - Subtest 3: Ekstraksi bab subjalur BTTH MTL Ch 1 (63 blok, prev=null, next=mtl/chapter-2) (lolos).
+    - Subtest 4: Preservasi urutan DOM, formatting inline bersarang, line break `<br>`, unwrapping tautan cerita, pembersihan iklan (lolos).
+    - Subtest 4B: Regresi DOM spesifik: (a) `<div><p>A</p><h2>B</h2><hr><p>C</p></div>` mempertahankan batas paragraf, heading, dan separator; (b) `<p><strong>A<span><img ...></span>B</strong></p>` mempertahankan urutan dan formatting bold; (c) `<figure><img ...></figure>` terekstraksi bersih sebagai `ImageBlock` (lolos).
+    - Subtest 4C: Regresi sanitasi promosi: mencocokkan hostname presisi, teks cerita sebelum/sesudah link donasi tetap utuh, tautan cerita dengan query string domain promo di-unwrap tanpa dihapus, kontainer `.donation-box` khusus terhapus (lolos).
+    - Subtest 5: Presidensi lazy loading (`data-src` mengesampingkan placeholder data SVG) dan resolusi URL gambar relatif terhadap `chapterPageUrl` (lolos).
+    - Subtest 6: Validasi konten PRD: bab pendek (< 100 karakter) dan bab gambar saja (0 paragraf teks) tervalidasi sah tanpa galat (lolos).
+    - Subtest 7: Klasifikasi error dan batas: bab kosong melempar 422 `CHAPTER_EMPTY_CONTENT`, kontainer pembaca hilang melempar 500 `SCRAPER_PARSE_ERROR`, soft-404 redirect ke novel detail melempar 404 `PROVIDER_NOT_FOUND`, bot challenge melempar 503 `PROVIDER_BLOCKED` (lolos).
+    - Subtest 7E: Regresi validasi navigasi: URL relatif teresolusi benar, navigasi disabled/# sah menghasilkan `null`, navigasi foreign novel melempar 500, navigasi cross-origin melempar 500, navigasi traversal literal/encoded melempar 500 (lolos).
+    - Subtest 8: Mock server deadline 8 detik & keamanan redirect: bab menggantung teraborsi 504 `PROVIDER_TIMEOUT`, redirect lintas-origin ditolak seketika sebelum diikuti, redirect ke halaman novel memicu 404 `PROVIDER_NOT_FOUND`, redirect ke bab lain ditolak (lolos).
+  * Jalankan `npm run test:chapter-content:live` (`npm run -w server build && node scripts/verify-chapter-content.mjs --live`) untuk memvalidasi upstream nyata:
+    - Live Kimi chapter ("kimi-wa-boku-no-koukai-ln", "volume-1-chapter-1"): Berhasil mengekstrak 90 blok dan 2 gambar live.
+    - Live BTTH MTL chapter ("btth", "mtl/chapter-1"): Berhasil mengekstrak 63 blok dan navigasi next `mtl/chapter-2`.
+    - Live non-existent chapter: Memvalidasi soft-404 upstream melempar 404 `PROVIDER_NOT_FOUND`.
+  * *Batas Verifikasi*: Pengujian ini memvalidasi ekstraksi konten bab, sanitasi, dan konversi ke `ContentBlock[]`. Lapisan in-memory caching LRU dialokasikan untuk `BE-05` dan routing REST API Hono dialokasikan untuk `BE-06`.
+* **Referensi Acuan**: [PRD.md: Seksi 3.1, 7, 8.3, 9.2](file:///d:/project/yomou/docs/PRD.md).
 
 ---
 

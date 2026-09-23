@@ -40,6 +40,75 @@ export function validateNovelSlug(novelId: string): string {
 }
 
 /**
+ * Validates a chapter slug string according to canonical Yomou identity rules.
+ * Strictly rejects:
+ * - Non-string, empty string, or whitespace only
+ * - Leading or trailing whitespace
+ * - Non-canonical leading or trailing slashes (e.g. '/ch-1' or 'ch-1/')
+ * - Empty path segments / consecutive slashes (e.g. 'mtl//ch-1')
+ * - Path traversal (literal '..' or percent-encoded '%2e%2e', etc.)
+ * - Backslashes, colons, null bytes, and protocol schemes
+ *
+ * Preserves canonical subpaths (e.g. 'mtl/chapter-1648-tamat') without mutating input.
+ * @throws {ProviderError} BAD_REQUEST (400) if chapterId is not canonical or invalid.
+ */
+export function validateChapterSlug(chapterId: string): string {
+  if (!chapterId || typeof chapterId !== 'string') {
+    throw new ProviderError('BAD_REQUEST', 'Chapter ID must be a non-empty string', 400);
+  }
+  if (chapterId.trim() !== chapterId) {
+    throw new ProviderError(
+      'BAD_REQUEST',
+      `Non-canonical chapterId: contains leading or trailing whitespace: "${chapterId}"`,
+      400
+    );
+  }
+  if (chapterId.startsWith('/') || chapterId.endsWith('/')) {
+    throw new ProviderError(
+      'BAD_REQUEST',
+      `Non-canonical chapterId: leading or trailing slashes are not allowed: "${chapterId}"`,
+      400
+    );
+  }
+  if (chapterId.includes('//')) {
+    throw new ProviderError(
+      'BAD_REQUEST',
+      `Non-canonical chapterId: empty path segment detected: "${chapterId}"`,
+      400
+    );
+  }
+  if (
+    hasPathTraversal(chapterId) ||
+    chapterId.includes('\\') ||
+    chapterId.includes(':') ||
+    chapterId.includes('\0')
+  ) {
+    throw new ProviderError(
+      'BAD_REQUEST',
+      `Invalid chapterId: path traversal or invalid characters detected: "${chapterId}"`,
+      400
+    );
+  }
+  const segments = chapterId.split('/');
+  for (const seg of segments) {
+    if (!seg || !/^[a-z0-9_-]+$/i.test(seg)) {
+      throw new ProviderError(
+        'BAD_REQUEST',
+        `Invalid chapterId segment: "${seg}" in "${chapterId}"`,
+        400
+      );
+    }
+  }
+  return chapterId;
+}
+
+export {
+  extractChapterContent,
+  cleanChapterDom,
+  normalizeSpans,
+} from './contentSanitizer.js';
+
+/**
  * Extracts a clean novel slug from a novel URL or path.
  * Strips domain, query parameters, and '/novel/' prefix.
  * Example: 'https://meionovels.com/novel/kimi-wa-boku-no-koukai-ln/' -> 'kimi-wa-boku-no-koukai-ln'
