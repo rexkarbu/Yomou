@@ -280,22 +280,44 @@ Berdasarkan inspeksi sistem berkas pada repositori `d:\project\yomou`:
 
 #### [BE-01] Implementasi HTTP Client Resilience & Interface Provider
 * **Area**: Backend
-* **Status**: `TODO`
-* **Tujuan**: Membangun antarmuka provider `INovelProvider` dan HTTP client berbasis `axios` dengan User-Agent realistis, timeout 8 detik, dan retry schedule.
+* **Status**: `DONE`
+* **Tujuan**: Membangun antarmuka provider `INovelProvider` dan HTTP client berbasis `axios` dengan User-Agent realistis, pemisahan timeout per-attempt vs deadline total 8 detik (SLA-NAV-03), penanganan Retry-After, dan retry schedule tanpa jitter.
 * **Ruang Lingkup**:
   * Membuat interface TypeScript `INovelProvider`.
-  * Implementasi wrapper HTTP client Axios dengan timeout konfigurabel (default 8000 ms).
-  * Mekanisme retry schedule: 1 kali percobaan awal + 3 kali retry (jeda 2s, 5s, 10s) khusus untuk error jaringan / timeout / 5xx.
+  * Implementasi wrapper HTTP client Axios dengan deadline total operasi (default 8000 ms per SLA-NAV-03 dan ketentuan navigasi reader) terpisah dari timeout per percobaan (default 8000 ms).
+  * Mekanisme retry schedule: 1 kali percobaan awal + hingga 3 kali retry (jeda default 2s, 5s, 10s tanpa jitter) khusus untuk error jaringan / timeout / 5xx / 429.
+  * Pembatalan aktif via root `AbortController` ketika total deadline tercapai, serta penghentian retry jika jeda melampaui sisa deadline.
+  * Penanganan respons HTTP 429 yang mematuhi header `Retry-After` (format integer detik nonnegatif maupun RFC 7231 HTTP-date di masa depan); pembatalan terstruktur dengan kode `PROVIDER_BLOCKED` (503) jika `Retry-After` melebihi deadline, dan fallback ke jadwal standar jika nilai negatif (-1), pecahan (1.5), atau bukan HTTP-date.
 * **Dependensi**: `FON-01`, `FON-02`.
 * **File/Area Terkait**:
-  * `server/src/interfaces/provider.interface.ts` [Usulan]
-  * `server/src/services/httpClient.ts` [Usulan]
+  * `server/src/interfaces/provider.interface.ts` [Selesai]
+  * `server/src/interfaces/index.ts` [Selesai]
+  * `server/src/services/httpClient.ts` [Selesai]
+  * `server/src/errors/provider.error.ts` [Selesai]
+  * `server/src/errors/index.ts` [Selesai]
+  * `server/src/index.ts` [Selesai]
+  * `scripts/verify-http-resilience.mjs` [Selesai]
+  * `package.json` [Selesai]
 * **Acceptance Criteria**:
-  * [ ] Request yang mengalami ECONNRESET atau timeout otomatis mencoba ulang hingga 3 kali sesuai jadwal jeda.
-  * [ ] Request yang melampaui batas hard timeout 8000 ms mengembalikan error terstruktur `PROVIDER_TIMEOUT`.
+  * [x] Request yang mengalami ECONNRESET atau timeout otomatis mencoba ulang hingga 3 kali sesuai jadwal jeda.
+  * [x] Request yang melampaui batas hard timeout / deadline operasi mengembalikan error terstruktur `PROVIDER_TIMEOUT`.
+  * [x] Deadline total operasi (8 detik per SLA-NAV-03 dan ketentuan navigasi reader) membatasi seluruh percobaan dan jeda retry; request aktif dibatalkan via AbortController dan retry tidak dimulai jika jeda melampaui deadline.
+  * [x] Respons 429 mematuhi header `Retry-After` (detik nonnegatif atau HTTP-date masa depan) dan berhenti terstruktur jika melampaui sisa deadline.
+  * [x] Format `Retry-After` yang tidak valid (negatif `-1`, pecahan `1.5`, string bukan HTTP-date) menghasilkan `null` dan terbukti memakai jadwal fallback (bukan retry langsung 0 ms).
+  * [x] Jadwal default terkonfigurasi tepat `[2000, 5000, 10000]` ms tanpa jitter tambahan.
+  * [x] Kesesuaian interface `INovelProvider` diverifikasi langsung via kompilator TypeScript (`implements INovelProvider`), termasuk pembuktian penolakan terhadap implementasi yang tidak sesuai tipe.
 * **Cara Verifikasi**:
-  * Jalankan pengujian mock server lokal yang mensimulasikan kegagalan jaringan 2 kali lalu sukses pada percobaan ke-3.
-* **Referensi Acuan**: [PRD.md: Seksi 3.1 & 8.2](file:///d:/project/yomou/docs/PRD.md).
+  * Jalankan `npm run test:http` (`npm run -w server build && node scripts/verify-http-resilience.mjs`) untuk memvalidasi:
+    - Konfigurasi default: deadline total 8000ms (SLA-NAV-03), timeout per percobaan 8000ms, maxRetries 3, jadwal jeda tanpa jitter `[2000, 5000, 10000]` ms.
+    - Fungsi `parseRetryAfter`: mem-parsing detik numerik nonnegatif (`120` -> 120000ms), RFC 7231 HTTP-date ke milidetik presisi, dan fallback `null` untuk header tidak valid (`-1`, `1.5`, `-1.5`, dsb).
+    - Skenario retry 2x gagal (ECONNRESET lalu 500) pulih pada percobaan ke-3 dengan jeda terukur persis tanpa jitter.
+    - Skenario deadline total vs per-attempt: pembatalan seketika saat delay retry melebihi sisa deadline (tanpa sleep sia-sia), serta pembatalan request aktif yang menggantung saat timer deadline total terpicu.
+    - Skenario HTTP 429: mematuhi `Retry-After: 1` dan HTTP-date masa depan dengan verifikasi waktu kedatangan di server tidak sebelum waktu yang diminta, berhenti terstruktur saat `Retry-After` melampaui deadline, serta membuktikan header negatif (`-1`), pecahan (`1.5`), dan string invalid memakai jadwal fallback.
+    - Skenario non-retriable: 404 (`PROVIDER_NOT_FOUND`) dan 403 (`PROVIDER_BLOCKED`) fail-fast seketika tanpa retry (1 server hit).
+    - Header hygiene: `User-Agent` Chrome Windows realistis, `Sec-Ch-Ua`, `Sec-Fetch-Mode`, `Cache-Control: no-cache`.
+    - Pemeriksaan TypeScript: `tsc --noEmit` memvalidasi `implements INovelProvider` lolos dengan 0 galat, dan implementasi yang salah tipe terbukti ditolak kompilator.
+  * *Batas Verifikasi*: Pengujian ini menguji ketahanan koneksi HTTP, jadwal jeda retry, penanganan timeout, dan kontrak provider menggunakan mock server lokal. Pengambilan data HTML nyata dari domain Meionovels (`meionovels.com`) berada di luar lingkup tugas ini dan dialokasikan untuk `BE-02`, `BE-03`, dan `BE-04`.
+* **Referensi Acuan**: [PRD.md: Seksi 3.1 & Seksi 9.2 (SLA-NAV-03)](file:///d:/project/yomou/docs/PRD.md).
 
 ---
 
