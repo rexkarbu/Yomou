@@ -380,21 +380,49 @@ Berdasarkan inspeksi sistem berkas pada repositori `d:\project\yomou`:
 
 #### [BE-03] Implementasi Meionovel Scraper: Pencarian Novel & Detail Novel Lengkap
 * **Area**: Backend
-* **Status**: `TODO`
+* **Status**: `DONE`
 * **Tujuan**: Mengekstrak hasil pencarian berdasarkan kata kunci serta detail metadata dan daftar seluruh bab dari novel target.
 * **Ruang Lingkup**:
-  * Metode `search(query: string, page: number)`: scrape hasil pencarian Meionovels (`?s={query}&post_type=wp-manga`).
-  * Metode `getNovelDetails(novelId: string)`: scrape halaman `https://meionovels.com/novel/{novelId}/`.
-  * Ekstraksi metadata: judul, penulis, sinopsis, genre array, status ("Ongoing" / "Completed"), cover URL, dan array seluruh bab (`id`, `title`, `chapterNumber`, `releaseDate`).
+  * Metode `search(query: string, page: number)`: scrape hasil pencarian Meionovels (`?s={query}&post_type=wp-manga`) dengan parsing metadata lengkap (judul, slug ID, cover HTTP(S), status, author, rating).
+  * Metode `getNovelDetails(novelId: string, options?: { totalTimeoutMs?: number })`: scrape halaman metadata `https://meionovels.com/novel/{novelId}/` dan endpoint AJAX daftar bab `https://meionovels.com/novel/{novelId}/ajax/chapters/` dengan pembagian sisa waktu dari total deadline 8 detik (SLA-NAV-03).
+  * Parsing metadata novel: judul, penulis, sinopsis bersih, genre array, status, cover URL absolut, bab terbaru, dan total bab.
+  * Parsing bab novel: urutan kronologis terbalik dari upstream descending (newest-first) ke urutan kronologis sejati (prolog / vol 1 ch 0 -> tamat); preservasi subpath (seperti `mtl/chapter-1648-tamat`); validasi novel ID dan URL bab (tolak cross-origin, URL milik novel lain, dan path traversal); deteksi elemen bab rusak (melempar `SCRAPER_PARSE_ERROR` 500, tidak dilewati diam-diam).
+  * Penyatuan eksekusi HTTP GET & POST pada `ResilientHttpClient`: POST retry hanya aktif jika `allowRetry: true` secara eksplisit disetel (endpoint idempotent baca bab).
+  * Kontrak identitas dan encoding URL: dokumentasi format `:chapterId` untuk endpoint API di masa depan (wajib di-URI-encode jika mengandung subpath).
+  * Penegakan batas tugas: `getChapterContent()` melempar galat 501 `NOT_IMPLEMENTED` (dijadwalkan pada BE-04).
 * **Dependensi**: `BE-02`.
 * **File/Area Terkait**:
-  * `server/src/providers/meionovel.provider.ts` [Usulan]
+  * `server/src/providers/meionovel.provider.ts` [Selesai]
+  * `server/src/utils/parser.ts` [Selesai]
+  * `server/src/services/httpClient.ts` [Selesai]
+  * `server/src/types/novel.ts` [Selesai]
+  * `client/src/types/novel.ts` [Selesai]
+  * `server/test/fixtures/` [Selesai - 7 fixture baru: search-kimi, search-empty, search-corrupted, detail-kimi, detail-kimi-chapters, detail-btth, detail-btth-chapters-sample, detail-404, detail-multi-volume-chapters, detail-corrupted-chapter]
+  * `scripts/verify-meionovel-details.mjs` [Selesai]
+  * `package.json` & `server/package.json` [Selesai - script `test:provider-details` dan `test:provider-details:live`]
 * **Acceptance Criteria**:
-  * [ ] `search("kimi")` mengembalikan novel terkait dengan metadata cover dan judul yang valid.
-  * [ ] `getNovelDetails("kimi-wa-boku-no-koukai-ln")` mengembalikan daftar bab terurut kronologis dengan slug bab stabil (contoh: `volume-4-chapter-14`).
-  * [ ] Indeks urutan bab tidak dijadikan sebagai ID bab (ID bab murni slug URL).
+  * [x] GET dan POST memakai implementasi request/retry bersama dalam `ResilientHttpClient`, tipe payload `unknown`, dan retry POST hanya diizinkan via `allowRetry: true` pada endpoint pembacaan bab AJAX yang idempoten.
+  * [x] Deadline 8 detik berlaku kumulatif untuk keseluruhan `getNovelDetails()`: pengambilan metadata + AJAX daftar bab berbagi batas waktu, dan request kedua memakai sisa waktu.
+  * [x] Format subjalur (seperti `mtl/chapter-1648-tamat`) dipreservasi konsisten pada seluruh pemanggil parser dan didokumentasikan pada tipe kontrak (`ChapterSummary.id`, `ChapterDetail.id`).
+  * [x] Validasi novelId dan URL bab: input kosong/spasi, path traversal literal maupun percent-encoded (`..`, `%2e%2e`, `%2E%2E`) ditolak sebelum normalisasi URL; tidak ada fallback basename untuk menyelamatkan input tidak valid; URL lintas origin dan bab milik novel lain ditolak secara ketat.
+  * [x] Urutan array `chapters` dibalik secara konsisten dari upstream newest-first menjadi kronologis sejati tanpa heuristik nomor; regresi `[Epilog, Chapter 2, Chapter 1]` terbukti menghasilkan `[Chapter 1, Chapter 2, Epilog]`, serta pengujian prolog dan nomor bab berulang multi-volume tetap terjaga.
+  * [x] Deteksi kosong/tidak ditemukan: kontainer bab tanpa item melempar `SCRAPER_PARSE_ERROR` (500) kecuali terdapat penanda kosong sah yang terverifikasi (`.no-chapter` / teks); penanda `.no-results` dibatasi pada area konten utama dan mengabaikan widget sidebar/footer baik pada pencarian maupun detail novel.
+  * [x] Snapshot fixture Kimi memvalidasi tepat 63 bab; tes live memvalidasi kelengkapan data live ($\ge 63$ bab), keunikan ID, metadata, serta tidak melewatkan bab rusak secara diam-diam.
+  * [x] Pengujian mengimpor provider langsung dari modul provider (`server/dist/providers/index.js`), bukan dari server HTTP.
+  * [x] Batas tugas teruji: `getChapterContent()` melempar 501 `NOT_IMPLEMENTED`.
 * **Cara Verifikasi**:
-  * Jalankan script uji `npm run -w server test:provider-details` dan pastikan minimal 10 bab pertama terekstrak dengan benar.
+  * Jalankan `npm run test:provider-details` (`npm run -w server build && node scripts/verify-meionovel-details.mjs`) untuk memvalidasi:
+    - Subtest 1: Validasi slug novel, deteksi traversal literal/encoded, dan pencegahan penyelamatan URL via basename fallback (lolos).
+    - Subtest 2: Parser pencarian pada fixture HTML (12 novel Kimi terurai, empty -> `[]`, corrupted -> 500, challenge -> 503, isolasi widget sidebar `.no-results`) (lolos).
+    - Subtest 3: Parser metadata novel (Kimi sinopsis bersih, status BTTH "Completed", 404 -> `PROVIDER_NOT_FOUND`, isolasi widget sidebar `.no-results` tidak memicu 404 palsu) (lolos).
+    - Subtest 4: Parser bab & urutan kronologis (63 bab Kimi vol 1 ch 0 -> vol 4 ch 14, preservasi subjalur `mtl/`, multi-volume prolog aman, bab korup melempar 500, cross-origin/mismatch ditolak, regresi Epilog dibalik konsisten, traversal literal/encoded `%2e%2e` ditolak, kontainer bab rusak melempar 500 dan verified empty marker mengembalikan `[]`) (lolos).
+    - Subtest 5: Mock server gabungan deadline total 8 detik (5A metadata+bab sukses dalam budget, 5B bab gantung teraborsi tepat pada sisa deadline, 5C metadata gantung teraborsi pada deadline total tanpa memulai request kedua) (lolos).
+    - Subtest 6: Batas implementasi BE-04 diverifikasi (501 NOT_IMPLEMENTED) (lolos).
+  * Jalankan `npm run test:provider-details:live` (`npm run -w server build && node scripts/verify-meionovel-details.mjs --live`) untuk memvalidasi:
+    - Live search("kimi"): Berhasil mengambil 12 novel live (status 200 OK).
+    - Live getNovelDetails("kimi-wa-boku-no-koukai-ln"): Berhasil mengambil 63 bab live dalam urutan kronologis (Vol 1 Ch 0 s.d. Vol 4 Ch 14, ID unik 100%).
+    - Live getNovelDetails("btth"): Berhasil mengambil 1648 bab live (Ch 1 s.d. Ch 1648 Tamat) dengan subpath `mtl/` terpreservasi konsisten.
+  * *Batas Verifikasi*: Pengujian ini memvalidasi fitur pencarian dan pengambilan rincian novel beserta daftar seluruh bab. Ekstraksi konten bab pembaca dan konversi ke `ContentBlock[]` dialokasikan untuk `BE-04`.
 * **Referensi Acuan**: [PRD.md: Seksi 3.1 & 8.3](file:///d:/project/yomou/docs/PRD.md).
 
 ---

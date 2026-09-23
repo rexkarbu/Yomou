@@ -32,6 +32,8 @@ export interface RequestOptions extends AxiosRequestConfig {
   retryDelays?: number[];
   /** Optional callback fired on each retry attempt */
   onRetry?: (attempt: number, error: unknown, delayMs: number) => void;
+  /** Explicitly allow/disallow retries (default: true for GET, false for POST) */
+  allowRetry?: boolean;
 }
 
 export interface HttpResponse<T = string> {
@@ -272,12 +274,18 @@ export class ResilientHttpClient {
     });
   }
 
-  public async get<T = string>(url: string, options: RequestOptions = {}): Promise<HttpResponse<T>> {
+  private async executeRequest<T = string>(
+    method: 'GET' | 'POST',
+    url: string,
+    data?: unknown,
+    options: RequestOptions = {}
+  ): Promise<HttpResponse<T>> {
     const perAttemptTimeoutMs = options.perAttemptTimeoutMs ?? this.defaultPerAttemptTimeoutMs;
     const totalTimeoutMs = options.totalTimeoutMs ?? this.defaultTotalTimeoutMs;
     const maxRetries = options.maxRetries ?? this.defaultMaxRetries;
     const retryDelays = options.retryDelays ?? this.defaultRetryDelays;
     const onRetry = options.onRetry ?? this.defaultOnRetry;
+    const allowRetry = options.allowRetry ?? (method === 'GET');
 
     const startTime = Date.now();
     const deadline = startTime + totalTimeoutMs;
@@ -315,8 +323,11 @@ export class ResilientHttpClient {
         overallController.signal.addEventListener('abort', onOverallAbort, { once: true });
 
         try {
-          const response: AxiosResponse<T> = await this.client.get<T>(url, {
+          const response: AxiosResponse<T> = await this.client.request<T>({
             ...options,
+            method,
+            url,
+            data,
             timeout: currentAttemptTimeout,
             signal: attemptController.signal,
           });
@@ -334,7 +345,7 @@ export class ResilientHttpClient {
             throw mapAxiosErrorToProviderError(error, url, attempt, perAttemptTimeoutMs, totalTimeoutMs, true);
           }
 
-          const canRetry = attempt <= maxRetries && isRetriableError(error);
+          const canRetry = allowRetry && attempt <= maxRetries && isRetriableError(error);
           if (!canRetry) {
             throw mapAxiosErrorToProviderError(error, url, attempt, perAttemptTimeoutMs, totalTimeoutMs, false);
           }
@@ -395,6 +406,14 @@ export class ResilientHttpClient {
     } finally {
       clearTimeout(totalDeadlineTimer);
     }
+  }
+
+  public async get<T = string>(url: string, options: RequestOptions = {}): Promise<HttpResponse<T>> {
+    return this.executeRequest<T>('GET', url, undefined, options);
+  }
+
+  public async post<T = string>(url: string, data?: unknown, options: RequestOptions = {}): Promise<HttpResponse<T>> {
+    return this.executeRequest<T>('POST', url, data, options);
   }
 }
 

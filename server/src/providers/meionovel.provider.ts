@@ -4,10 +4,18 @@
  */
 
 import type { INovelProvider } from '../interfaces/provider.interface.js';
-import type { NovelSummary, NovelDetail, ChapterDetail } from '../types/novel.js';
+import type { NovelSummary, NovelDetail, ChapterDetail, ChapterSummary } from '../types/novel.js';
 import { ResilientHttpClient, httpClient } from '../services/httpClient.js';
-import { parseLatestFeed, parsePopularFeed } from '../utils/parser.js';
+import {
+  parseLatestFeed,
+  parsePopularFeed,
+  parseSearchFeed,
+  parseNovelMetadata,
+  parseNovelChapters,
+  validateNovelSlug,
+} from '../utils/parser.js';
 import { ProviderError } from '../errors/provider.error.js';
+import * as cheerio from 'cheerio';
 
 export const MEIONOVEL_BASE_URL = 'https://meionovels.com';
 
@@ -47,26 +55,80 @@ export class MeionovelProvider implements INovelProvider {
 
   /**
    * Mencari novel berdasarkan kata kunci judul atau penulis
-   * Catatan: Dijadwalkan pada BE-03.
+   * URL: https://meionovels.com/?s={query}&post_type=wp-manga
    */
-  async search(query: string, page?: number): Promise<NovelSummary[]> {
-    throw new ProviderError(
-      'INTERNAL_SERVER_ERROR',
-      `Method search() is not yet implemented (scheduled for BE-03): query="${query}", page=${page ?? 1}`,
-      501
-    );
+  async search(query: string, page: number = 1): Promise<NovelSummary[]> {
+    if (!query || typeof query !== 'string' || !query.trim()) {
+      return [];
+    }
+    const cleanQuery = query.trim();
+    const pageNum = Number.isSafeInteger(page) && page > 0 ? page : 1;
+    const url =
+      pageNum <= 1
+        ? `${this.baseUrl}/?s=${encodeURIComponent(cleanQuery)}&post_type=wp-manga`
+        : `${this.baseUrl}/page/${pageNum}/?s=${encodeURIComponent(cleanQuery)}&post_type=wp-manga`;
+
+    const response = await this.client.get<string>(url);
+    return parseSearchFeed(response.data, this.baseUrl);
   }
 
   /**
-   * Mengambil metadata lengkap novel beserta seluruh daftar bab
-   * Catatan: Dijadwalkan pada BE-03.
+   * Mengambil metadata lengkap novel beserta seluruh daftar bab (kronologis).
+   * Menegakkan batas waktu total operasi 8 detik untuk gabungan metadata + AJAX chapters.
+   *
+   * @param novelId Slug novel (misal: 'kimi-wa-boku-no-koukai-ln', 'btth')
    */
-  async getNovelDetails(novelId: string): Promise<NovelDetail> {
-    throw new ProviderError(
-      'INTERNAL_SERVER_ERROR',
-      `Method getNovelDetails() is not yet implemented (scheduled for BE-03): novelId="${novelId}"`,
-      501
-    );
+  async getNovelDetails(novelId: string, options?: { totalTimeoutMs?: number }): Promise<NovelDetail> {
+    const validId = validateNovelSlug(novelId);
+    const totalTimeoutMs = options?.totalTimeoutMs ?? 8000;
+    const startTime = Date.now();
+
+    const mainUrl = `${this.baseUrl}/novel/${validId}/`;
+    const metadataResponse = await this.client.get<string>(mainUrl, { totalTimeoutMs });
+
+    const metadata = parseNovelMetadata(metadataResponse.data, validId, this.baseUrl);
+
+    // Compute remaining time for chapter list request (Correction 2)
+    const elapsedMs = Date.now() - startTime;
+    const remainingMs = totalTimeoutMs - elapsedMs;
+
+    if (remainingMs <= 0) {
+      throw new ProviderError(
+        'PROVIDER_TIMEOUT',
+        `Total operation deadline of ${totalTimeoutMs}ms exceeded before fetching chapter list for "${validId}"`,
+        504,
+        { novelId: validId, totalTimeoutMs, elapsedMs }
+      );
+    }
+
+    // Check if chapter elements already exist in main page DOM (fallback for static layouts)
+    const $ = cheerio.load(metadataResponse.data);
+    let chapters: ChapterSummary[];
+
+    if ($('.wp-manga-chapter').length > 0) {
+      chapters = parseNovelChapters(metadataResponse.data, validId, this.baseUrl);
+    } else {
+      // Fetch via AJAX endpoint (Meionovels Madara theme)
+      const ajaxUrl = `${this.baseUrl}/novel/${validId}/ajax/chapters/`;
+      const chapterResponse = await this.client.post<string>(ajaxUrl, '', {
+        totalTimeoutMs: remainingMs,
+        allowRetry: true, // Idempotent read endpoint verified
+        headers: {
+          'x-requested-with': 'XMLHttpRequest',
+        },
+      });
+
+      chapters = parseNovelChapters(chapterResponse.data, validId, this.baseUrl);
+    }
+
+    const latestChapter = chapters.length > 0 ? chapters[chapters.length - 1] : undefined;
+
+    return {
+      ...metadata,
+      totalChapters: chapters.length,
+      latestChapter,
+      chapters,
+    };
   }
 
   /**

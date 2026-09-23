@@ -25,7 +25,12 @@ export interface NovelSummary {
 }
 
 export interface ChapterSummary {
-  id: string; // Slug URL bab unik per novel, e.g. 'volume-4-chapter-14'
+  /**
+   * Slug / subjalur URL bab unik per novel (misal: 'volume-4-chapter-14' atau 'mtl/chapter-1648-tamat').
+   * Catatan encoding: Jika bab mengandung garis miring ('/'), nilai ID harus di-encode
+   * (encodeURIComponent) pada parameter endpoint REST API (e.g. :chapterId) agar tidak terpecah menjadi segmen rute terpisah.
+   */
+  id: string;
   novelId: string; // Foreign key merujuk ke novel.id
   title: string;
   chapterNumber: number; // Nomor urut bab numerik
@@ -40,7 +45,10 @@ export interface ChapterImage {
 }
 
 export interface ChapterDetail {
-  id: string; // Slug URL bab, e.g. 'volume-4-chapter-14'
+  /**
+   * Slug / subjalur URL bab unik per novel (misal: 'volume-4-chapter-14' atau 'mtl/chapter-1648-tamat').
+   */
+  id: string;
   novelId: string; // Foreign key merujuk ke novel.id
   title: string;
   chapterNumber: number;

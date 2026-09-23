@@ -58,9 +58,9 @@ assert.strictEqual(
 
 // Chapter slug extraction
 assert.strictEqual(
-  extractChapterSlug('https://meionovels.com/novel/btth/mtl/chapter-1648-tamat/'),
-  'chapter-1648-tamat',
-  'Must extract last path segment as chapter slug'
+  extractChapterSlug('https://meionovels.com/novel/btth/mtl/chapter-1648-tamat/', 'btth'),
+  'mtl/chapter-1648-tamat',
+  'Must preserve subpath like mtl/ in chapter slug'
 );
 assert.strictEqual(
   extractChapterSlug('https://meionovels.com/novel/kimi-wa-boku-no-koukai-ln/volume-4-chapter-14/'),
@@ -194,7 +194,7 @@ assert(
 const btth = popularItems.find((n) => n.id === 'btth');
 assert.strictEqual(btth.title, 'Battle Through the Heavens');
 assert(btth.coverUrl.includes('16_btth'), 'BTTH cover URL must match asset');
-assert.strictEqual(btth.latestChapter?.id, 'chapter-1648-tamat');
+assert.strictEqual(btth.latestChapter?.id, 'mtl/chapter-1648-tamat');
 assert.strictEqual(btth.latestChapter?.chapterNumber, 1648);
 console.log(`  Subtest 3B: Successfully verified popular novels feed (BTTH, Swallowed Star verified)`);
 
@@ -293,27 +293,8 @@ console.log('--- 5. Testing Provider Contract & Unimplemented Boundaries ---');
 assert.strictEqual(meionovelProvider.name, 'meionovel');
 assert.strictEqual(meionovelProvider.baseUrl, 'https://meionovels.com');
 
-// Test search() throws 501 NOT_IMPLEMENTED (not returning fake empty data)
-let searchErr = null;
-try {
-  await meionovelProvider.search('kimi');
-} catch (err) {
-  searchErr = err;
-}
-assert(searchErr instanceof ProviderError);
-assert.strictEqual(searchErr.status, 501, 'search() must throw 501 NOT_IMPLEMENTED');
-assert(searchErr.message.includes('BE-03'), 'Error message must note scheduling in BE-03');
-
-// Test getNovelDetails() throws 501 NOT_IMPLEMENTED
-let detailErr = null;
-try {
-  await meionovelProvider.getNovelDetails('btth');
-} catch (err) {
-  detailErr = err;
-}
-assert(detailErr instanceof ProviderError);
-assert.strictEqual(detailErr.status, 501, 'getNovelDetails() must throw 501 NOT_IMPLEMENTED');
-assert(detailErr.message.includes('BE-03'), 'Error message must note scheduling in BE-03');
+// Note: search() and getNovelDetails() are now implemented in BE-03.
+// Boundary test for unimplemented methods: getChapterContent() must throw 501 NOT_IMPLEMENTED (BE-04)
 
 // Test getChapterContent() throws 501 NOT_IMPLEMENTED
 let chapterErr = null;
