@@ -197,26 +197,58 @@ Berdasarkan inspeksi sistem berkas pada repositori `d:\project\yomou`:
 
 #### [FON-04] Setup Desain Sistem Tri-Tema & Komponen Primitif Sesuai Pedoman Anti-Pattern
 * **Area**: UI/UX & Frontend
-* **Status**: `TODO`
+* **Status**: `IN_PROGRESS`
 * **Tujuan**: Membangun fondasi tema dan komponen primitif yang mematuhi token semantik dan checklist visual [anti-patterns-ui.md](file:///d:/project/yomou/docs/anti-patterns-ui.md).
 * **Ruang Lingkup**:
-  * Definisi token warna untuk Light (`#FFFFFF`), Dark (`#121212`), dan Sepia (`#F4ECD8`) pada NativeWind/Tailwind config.
+  * Definisi token warna untuk Light (`#FFFFFF`), Dark (`#121212`), dan Sepia (`#F4ECD8`) pada NativeWind/Tailwind config dengan kalibrasi kontras WCAG AA/AAA.
   * Implementasi `ThemeContext` dan hook `useTheme` untuk penggantian tema dinamis.
-  * Membuat komponen primitif fungsional: `Button` (Filled, Outlined, Text), `Surface` (Card, Sheet), `Text` (Headline, Title, Body, Caption), dan `Icon` (Material Symbols Rounded 24dp).
-  * Menjamin target sentuh minimal 48x48 dp pada seluruh komponen tombol primitif.
+  * Membuat komponen primitif fungsional: `Button` (Filled, Outlined, Text), `Surface` (Card, Sheet, Raised, Overlay), `Typography` (Headline, Title, Body, Label, Caption), dan `Icon` (Material Symbols Rounded 24dp).
+  * Menjamin target sentuh minimal 48x48 dp pada seluruh komponen tombol primitif tanpa degradasi dari style eksternal.
+  * Integrasi penuh NativeWind v4 (`metro.config.js`, `babel.config.js`, `global.css`, `tailwind.config.js`) dan pembuktian alur bundling utility class.
+  * Menyiapkan layar uji interaktif dan verifikasi tema pada `client/App.tsx`.
 * **Dependensi**: `FON-01`.
 * **File/Area Terkait**:
-  * `client/tailwind.config.js` [Usulan]
-  * `client/src/styles/theme.ts` [Usulan]
-  * `client/src/context/ThemeContext.tsx` [Usulan]
-  * `client/src/components/common/Button.tsx` [Usulan]
-  * `client/src/components/common/Typography.tsx` [Usulan]
+  * `client/tailwind.config.js` [Selesai]
+  * `client/global.css` [Selesai]
+  * `client/metro.config.js` [Selesai]
+  * `client/babel.config.js` [Selesai]
+  * `client/nativewind-env.d.ts` [Selesai]
+  * `client/src/styles/theme.ts` [Selesai]
+  * `client/src/context/ThemeContext.tsx` [Selesai]
+  * `client/src/components/common/button-layout.ts` [Selesai]
+  * `client/src/components/common/Button.tsx` [Selesai]
+  * `client/src/components/common/Typography.tsx` [Selesai]
+  * `client/src/components/common/Surface.tsx` [Selesai]
+  * `client/src/components/common/Icon.tsx` [Selesai]
+  * `client/src/components/common/index.ts` [Selesai]
+  * `client/App.tsx` [Selesai]
+  * `scripts/verify-theme-primitives.mjs` [Selesai]
 * **Acceptance Criteria**:
-  * [ ] Tidak ada penggunaan gradien ungu/biru, efek glassmorphism, atau border neon pada seluruh token dan primitif.
-  * [ ] Seluruh tombol interaktif memiliki minHeight/minWidth 48dp atau padding sentuh 48dp.
-  * [ ] Komponen tombol tanpa label teks wajib mewajibkan prop `accessibilityLabel`.
+  * [x] Tidak ada penggunaan gradien ungu/biru, efek glassmorphism, atau border neon pada seluruh token dan primitif.
+  * [x] Seluruh tombol interaktif memiliki minHeight/minWidth 48dp atau padding sentuh 48dp (terproteksi dari penurunan oleh style eksternal).
+  * [x] Komponen tombol tanpa label teks wajib mewajibkan prop `accessibilityLabel` (compile-time enforced via TypeScript discriminated union).
+  * [x] Integrasi NativeWind terbukti aktif memproses utility class pada alur bundling.
 * **Cara Verifikasi**:
-  * Render komponen primitif pada Storybook/test screen di ketiga mode tema dan periksa keselarasan warna menggunakan color inspector.
+  * Jalankan `npm run test:theme` (`node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/verify-theme-primitives.mjs`) untuk memvalidasi:
+    - Impor langsung token aplikasi `THEME_COLORS` dari `client/src/styles/theme.ts`.
+    - Evaluasi kontras seluruh pasangan warna aktual (teks utama AAA $\ge 7.0:1$, teks sekunder AA $\ge 4.5:1$, status error $\ge 4.5:1$, status success $\ge 4.5:1$, label tombol filled normal $\ge 4.5:1$, dan label tombol filled saat state pressed $\ge 4.5:1$).
+    - Penegakan target sentuh tombol: style eksternal dengan ukuran di bawah 48dp tidak dapat menurunkan `minHeight`/`minWidth` di bawah 48dp.
+    - Penggabungan `accessibilityState`: properti kustom (seperti `selected: true`) tetap dipertahankan sementara status internal `disabled` dan `busy` (saat loading) tetap otoritatif.
+    - Ekstraksi dan emisi utility class NativeWind (`.items-center`) dari komponen ke dalam CSS.
+    - Penegakan compile-time TypeScript bahwa tombol icon-only tanpa `accessibilityLabel` ditolak kompilasi.
+  * Jalankan `npm run typecheck:client` (`tsc --noEmit`) untuk validasi tipe data client.
+  * Jalankan `npx expo export --platform android` di `client/` untuk membuktikan kelancaran alur bundling Metro/Hermes.
+  * Jalankan `npm run check:contracts`, `npm run test:sqlite`, dan `npm run -w server build` untuk memastikan integritas dependensi.
+  * *Status Pengujian Otomatis yang Sudah Lulus*:
+    - `npm run test:theme`: Lolos 100% (57 pasangan kontras diuji tanpa kegagalan: 24 pasangan lulus AAA $\ge 7.0:1$, 33 pasangan lulus AA $\ge 4.5:1$; koreksi minimal token Dark `accentPrimary` `#60A5FA` dan `accentPressed` `#78B3FB` menjadikan kontras terhadap `surfaceOverlay` 6.11:1 [AA], label tombol filled normal 7.37:1 [AAA], dan pressed 8.60:1 [AAA]; aset font offline Material Symbols Rounded 1.1MB dan lisensi Apache 2.0 terverifikasi; pemetaan codepoint Google 33 glyph valid; validator runtime `isMaterialSymbolName` terverifikasi; compile-time TypeScript verifikasi nama glyph valid diterima dan nama tidak tersedia ditolak baik pada `<Icon />` maupun `<Button />`; proteksi target sentuh tombol $\ge 48\times 48\text{dp}$; merger accessibilityState; ekstraksi utility class NativeWind).
+    - `npm run typecheck:client`: Lolos tanpa galat (`tsc --noEmit`).
+    - `npx expo export --platform android`: Lolos bundling Android (1020 modul, asset `MaterialSymbolsRounded_400Regular.ttf` 1.1MB ter-bundle, bytecode Hermes `index-*.hbc` 2.8MB).
+    - `npm run check:contracts`: Lolos tanpa galat (paritas kontrak 100%).
+    - `npm run test:sqlite`: Lolos tanpa galat (DDL, idempotensi, cascade, filesystem paths).
+    - `npm run -w server build`: Lolos tanpa galat.
+  * *Batas Verifikasi Visual, TalkBack & Runtime Android*:
+    - **Pemeriksaan Visual / Render Ikon Nyata & TalkBack Screen Reader Android Belum Diuji di Perangkat**: Seluruh kalkulasi kontras (termasuk `accentPrimary` vs `surfaceOverlay`), logika aksesibilitas, aset offline, dan penolakan compile-time telah diverifikasi otomatis. Namun, render visual glyph ikon yang sesungguhnya di layar canvas Android dan navigasi audio TalkBack belum diuji di emulator atau perangkat fisik Android nyata karena ketiadaan lingkungan Android SDK/adb lokal.
+    - **Status Tugas**: Sesuai prinsip bahwa verifikasi statis/bundling tidak menggantikan pengujian runtime visual dan audio nyata di Android, status `FON-04` dipertahankan **`IN_PROGRESS`** hingga inspeksi visual langsung dan pengujian TalkBack di perangkat/emulator selesai.
 * **Referensi Acuan**: [anti-patterns-ui.md: Seksi 4.1, 4.4, 4.5, 4.9](file:///d:/project/yomou/docs/anti-patterns-ui.md).
 
 ---

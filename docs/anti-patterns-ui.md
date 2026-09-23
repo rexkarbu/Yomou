@@ -268,12 +268,13 @@ Aplikasi mendukung 3 tema resmi sesuai PRD. Setiap token warna memiliki peran se
 | `text-secondary` | `#4B5563` (rasio > 7:1) | `#9CA3AF` (rasio > 6:1) | `#655344` (rasio > 5.5:1) |
 | `border-subtle` | `#E5E7EB` | `#27272A` | `#DDD2B8` |
 | `border-strong` | `#D1D5DB` | `#3F3F46` | `#C8BCA0` |
-| `accent-primary` | `#2563EB` | `#3B82F6` | `#8B4513` |
-| `accent-on-primary` | `#FFFFFF` | `#FFFFFF` | `#FFFFFF` |
-| `status-error` | `#DC2626` | `#EF4444` | `#991B1B` |
-| `status-success` | `#16A34A` | `#22C55E` | `#2E7D32` |
+| `accent-primary` | `#2563EB` | `#60A5FA` | `#8B4513` |
+| `accent-on-primary` | `#FFFFFF` (rasio > 5.1:1) | `#121212` (rasio > 7.4:1) | `#FFFFFF` (rasio > 7.1:1) |
+| `accent-pressed` | `#1F54C8` (rasio > 6.6:1) | `#78B3FB` (rasio > 8.6:1) | `#763B10` (rasio > 8.7:1) |
+| `status-error` | `#DC2626` (rasio > 4.6:1) | `#F87171` (rasio > 5.6:1) | `#991B1B` (rasio > 6.0:1) |
+| `status-success` | `#15803D` (rasio > 4.8:1) | `#22C55E` (rasio > 6.8:1) | `#1B5E20` (rasio > 5.9:1) |
 
-*Rasio kontras di atas dihitung terhadap `surface-background` masing-masing tema dan memenuhi standar WCAG 2.1 Level AA/AAA.*
+*Seluruh token di atas dikalibrasi memenuhi ambang batas WCAG 2.1 Level AA ($\ge 4.5:1$) pada teks normal/komponen dan Level AAA ($\ge 7.0:1$) pada teks utama di seluruh varian permukaan (`surface-background`, `surface-raised`, `surface-overlay`) serta pada keadaan tombol aktif/ditekan (`accent-pressed`).*
 
 ### 4.2 Tipografi UI vs Tipografi Konten Bacaan
 * **Tipografi Antarmuka (UI Typography)**:
