@@ -323,23 +323,57 @@ Berdasarkan inspeksi sistem berkas pada repositori `d:\project\yomou`:
 
 #### [BE-02] Implementasi Meionovel Scraper: Feed Pembaruan Terbaru & Novel Populer
 * **Area**: Backend
-* **Status**: `TODO`
+* **Status**: `DONE`
 * **Tujuan**: Mengekstrak data daftar novel dari seksi *Pembaruan Terbaru* (paginated) dan *Novel Populer* (`?m_orderby=views`) pada situs `meionovels.com`.
 * **Ruang Lingkup**:
   * Membuat class `MeionovelProvider implements INovelProvider`.
-  * Metode `getLatest(page: number)`: scrape artikel `.page-item-detail` dari URL `https://meionovels.com/page/{page}/`.
-  * Metode `getTrending()`: scrape widget sidebar "Novel Populer" / `https://meionovels.com/novel/?m_orderby=views`.
-  * Ekstraksi slug novel stabil (`novelId`), judul, cover URL, bab terbaru, dan waktu pembaruan.
+  * Metode `getLatest(page: number)`: scrape artikel `.page-item-detail` dari URL `https://meionovels.com/page/{page}/` (untuk page $\le 1$ menggunakan `https://meionovels.com/`). Ketat pada feed utama dan **tidak pernah memakai fallback sidebar populer**.
+  * Metode `getTrending()`: scrape feed `https://meionovels.com/novel/?m_orderby=views` (dengan fallback widget sidebar `.popular-item-wrap`).
+  * Normalisasi cover aman: `normalizeImageUrl(rawUrl, baseUrl)` menggunakan `new URL(rawUrl, baseUrl)` dan hanya menerima protokol `http:` atau `https:`. Menolak skema berbahaya (`javascript:`, `data:`, `file:`) dan URL tidak valid secara eksplisit dengan mengembalikan `null`. Item dengan cover tidak valid/berbahaya ditolak dari hasil parsing.
+  * Penanganan batas ketahanan: deteksi bot challenge Cloudflare (`PROVIDER_BLOCKED` 503), perbedaan hasil kosong sah pada area feed utama (`Nothing Found` / `no-results` -> `[]`), dan galat perubahan tata letak / item rusak (`SCRAPER_PARSE_ERROR` 500 jika kontainer ditemukan tapi tidak ada item valid yang berhasil diekstrak).
+  * Penegakan batas implementasi: `search()`, `getNovelDetails()`, dan `getChapterContent()` melempar galat 501 `NOT_IMPLEMENTED` secara eksplisit (tidak mengembalikan data kosong palsu).
 * **Dependensi**: `BE-01`.
 * **File/Area Terkait**:
-  * `server/src/providers/meionovel.provider.ts` [Usulan]
-  * `server/src/utils/parser.ts` [Usulan]
+  * `server/src/providers/meionovel.provider.ts` [Selesai]
+  * `server/src/providers/index.ts` [Selesai]
+  * `server/src/utils/parser.ts` [Selesai]
+  * `server/src/index.ts` [Selesai]
+  * `server/test/fixtures/` [Selesai - termasuk 4 edge-case fixtures]
+  * `scripts/verify-meionovel-scraper.mjs` [Selesai]
+  * `package.json` [Selesai - script `test:provider-feeds` dan `test:provider-feeds:live`]
+  * `server/package.json` [Selesai - script `test:provider-feeds` dan `test:provider-feeds:live`]
 * **Acceptance Criteria**:
-  * [ ] `getLatest(1)` mengembalikan array objek `NovelSummary` lengkap dengan judul, cover URL, dan `latestChapter`.
-  * [ ] `getTrending()` mengembalikan daftar novel populer terverifikasi (seperti *Battle Through the Heavens*, *Swallowed Star*).
-  * [ ] Slug ID novel bersih dari domain dan awalan `/novel/` (contoh: `kimi-wa-boku-no-koukai-ln`).
+  * [x] `getLatest(1)` mengembalikan array objek `NovelSummary` lengkap dengan judul, cover URL absolut HTTP(S), dan `latestChapter`.
+  * [x] `getTrending()` mengembalikan daftar novel populer terverifikasi (seperti *Battle Through the Heavens*, *Swallowed Star*, *Mesin Nano*).
+  * [x] Slug ID novel bersih dari domain dan awalan `/novel/` (contoh: `kimi-wa-boku-no-koukai-ln`, `btth`).
+  * [x] Konteks feed terbaru dan populer terisolasi: sidebar populer hanya menjadi fallback `getTrending()` dan tidak pernah menggantikan feed `getLatest()`.
+  * [x] Kontainer feed yang ditemukan namun seluruh itemnya rusak/gagal diekstrak melempar `SCRAPER_PARSE_ERROR` (500), bukan `[]`.
+  * [x] Normalisasi cover menjamin URL absolut HTTP(S), mengubah URL relatif/protocol-relative, serta menolak skema terlarang (`javascript:`, `data:`, `file:`) dengan mengembalikan `null`.
+  * [x] Pengujian diperkuat mencakup seluruh kasus tepi: feed terbaru kosong + sidebar populer (tetap `[]`), feed terbaru rusak + sidebar populer (`SCRAPER_PARSE_ERROR`), kontainer ada dengan link rusak (`SCRAPER_PARSE_ERROR`), dan cover berbahaya (`SCRAPER_PARSE_ERROR`).
+  * [x] Suite pengujian terpisah rapi antara offline fixtures (`test:provider-feeds`) dan live smoke test (`test:provider-feeds:live`). Mode live keluar dengan exit code non-zero jika terjadi kegagalan, dan memvalidasi bahwa halaman 2 benar-benar menghasilkan item feed utama yang berbeda dari halaman 1 serta bukan daftar trending.
+  * [x] Metode yang belum diimplementasikan (`search`, `getNovelDetails`, `getChapterContent`) melempar galat 501 eksplisit tanpa memalsukan keberhasilan.
 * **Cara Verifikasi**:
-  * Jalankan script runner `npm run -w server test:provider-feeds` dan periksa kebenaran JSON hasil ekstraksi.
+  * Jalankan pengujian offline: `npm run test:provider-feeds` (`npm run -w server build && node scripts/verify-meionovel-scraper.mjs`) untuk memvalidasi:
+    - Utilitas ekstraksi: `extractNovelSlug`, `extractChapterSlug`, `extractChapterNumber` terverifikasi akurat.
+    - Normalisasi cover: URL relatif (`images/cover.jpg`), protocol-relative (`//...`), absolut HTTP/HTTPS, serta penolakan skema terlarang (`javascript:alert(1)`, `data:...`, `file:...`) terverifikasi 100% aman.
+    - Uji fixture sampel HTML riil offline:
+      - 10 novel terbaru terekstrak lengkap dengan slug, judul, cover absolut, dan bab terbaru dari `home-feed.html`.
+      - 12 novel populer terekstrak lengkap (termasuk verifikasi judul *Battle Through the Heavens* `btth`, *Swallowed Star* `swallowed-star`) dari `popular-feed.html`.
+      - Halaman batas paginasi kosong (`nothing-found.html`) terbukti mengembalikan `[]` secara sah.
+      - Halaman anti-bot challenge (`cloudflare-challenge.html`) terbukti melempar `PROVIDER_BLOCKED` (503).
+      - Markup rusak (`corrupted-empty.html`) terbukti melempar `SCRAPER_PARSE_ERROR` (500).
+    - Uji 4 kasus tepi review:
+      - Kasus 4A: `latest-empty-with-popular-sidebar.html` -> `parseLatestFeed` mengembalikan `[]`, tidak bocor ke sidebar populer.
+      - Kasus 4B: `latest-corrupted-with-popular-sidebar.html` -> melempar `SCRAPER_PARSE_ERROR` (500), tidak bocor ke sidebar populer.
+      - Kasus 4C: `container-with-broken-links.html` -> kontainer ada tetapi link rusak melempar `SCRAPER_PARSE_ERROR` (500).
+      - Kasus 4D: `container-with-dangerous-cover.html` -> cover berbahaya ditolak dan melempar `SCRAPER_PARSE_ERROR` (500).
+    - Kontrak provider & batas tugas: `search()`, `getNovelDetails()`, dan `getChapterContent()` terbukti melempar galat 501.
+  * Jalankan live smoke test: `npm run test:provider-feeds:live`:
+    - `getLatest(1)` live: Lolos (10 novel riil termuat, status 200 OK).
+    - `getTrending()` live: Lolos (12 novel populer riil termuat, status 200 OK).
+    - `getLatest(2)` paginasi live: Lolos (10 novel riil halaman 2 termuat, diverifikasi memiliki ID berbeda dari halaman 1 dan bukan daftar trending).
+    - Mode live terkonfigurasi keluar dengan exit code 1 jika ada pemeriksaan wajib yang gagal.
+  * *Batas Verifikasi*: Pengujian ini memvalidasi feed daftar novel (pembaruan terbaru & populer). Ekstraksi detail novel lengkap dan seluruh bab dialokasikan untuk `BE-03`, dan sanitasi konten pembaca ke `ContentBlock[]` dialokasikan untuk `BE-04`.
 * **Referensi Acuan**: [PRD.md: Seksi 3.5 & 10](file:///d:/project/yomou/docs/PRD.md).
 
 ---

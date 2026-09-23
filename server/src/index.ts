@@ -21,4 +21,7 @@ export default app;
 export * from './interfaces/index.js';
 export * from './errors/index.js';
 export * from './services/httpClient.js';
+export * from './providers/index.js';
+export * from './utils/parser.js';
 export * from './types/index.js';
+
