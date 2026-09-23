@@ -255,23 +255,50 @@ Berdasarkan inspeksi sistem berkas pada repositori `d:\project\yomou`:
 
 #### [FON-05] Setup Navigasi Utama Aplikasi Android
 * **Area**: Frontend
-* **Status**: `TODO`
+* **Status**: `IN_PROGRESS`
 * **Tujuan**: Menyiapkan kerangka navigasi utama Android menggunakan React Navigation (Native Stack + Bottom Tabs).
 * **Ruang Lingkup**:
   * Inisialisasi Bottom Tab Navigator untuk 2 tab utama: **Discover** dan **Library**.
-  * Inisialisasi Native Stack Navigator untuk transisi layar: `HomeScreen`, `NovelDetailScreen`, `ReaderScreen`, dan `DownloadManagerScreen`.
+  * Inisialisasi Native Stack Navigator untuk transisi layar: `MainTabs`, `NovelDetailScreen`, `ReaderScreen`, dan `DownloadManagerScreen`.
   * Konfigurasi Bottom Navigation Bar datar solid sesuai token tema aktif tanpa efek frosted glass atau bayangan bertumpuk.
-* **Dependensi**: `FON-04`.
+  * Penanganan safe area Android (status bar dan gesture/navigation bar) serta penegakan target sentuh tab minimal $48\times 48\text{dp}$.
+  * Penerapan parameter rute TypeScript ketat dengan kontrol positif dan negatif compile-time.
+* **Dependensi**: `FON-04` (*Persiapan implementasi FON-05 diizinkan sementara verifikasi runtime dependensi FON-04 masih tertunda*).
 * **File/Area Terkait**:
-  * `client/src/navigation/RootNavigator.tsx` [Usulan]
-  * `client/src/navigation/BottomTabNavigator.tsx` [Usulan]
-  * `client/src/navigation/types.ts` [Usulan]
+  * `client/src/navigation/types.ts` [Selesai]
+  * `client/src/navigation/BottomTabNavigator.tsx` [Selesai]
+  * `client/src/navigation/RootNavigator.tsx` [Selesai]
+  * `client/src/navigation/index.ts` [Selesai]
+  * `client/src/screens/` [Selesai - placeholder Discover, Library, Detail, Reader, DownloadManager]
+  * `client/App.tsx` [Selesai - integrasi SafeAreaProvider, ThemeProvider, NavigationContainer, RootNavigator, startup initStorage error reporting]
+  * `client/package.json` & `package-lock.json` [Selesai - dependensi React Navigation dan native modules versi Expo SDK]
+  * `scripts/verify-navigation-setup.mjs` [Selesai]
 * **Acceptance Criteria**:
-  * [ ] Ikon navigasi menggunakan vektor resmi seragam (24dp) dengan label teks yang jelas (bebas dari emoji navigasi).
-  * [ ] Berpindah antar tab terjadi secara instan tanpa animasi berulang atau efek parallax.
-  * [ ] Layar Reader ditampilkan sebagai modal/stack penuh yang menyembunyikan bottom bar secara otomatis.
+  * [x] Ikon navigasi menggunakan vektor resmi seragam (24dp) dengan label teks yang jelas (bebas dari emoji navigasi) dari keluarga Material Symbols Rounded offline (`auto_stories` dan `library_books`).
+  * [ ] Berpindah antar tab terjadi secara instan tanpa animasi berulang atau efek parallax pada perangkat Android (belum diuji di runtime native).
+  * [x] Konfigurasi arsitektur navigator menempatkan layar Detail Novel dan Reader pada Native Stack di luar MainTabs (terverifikasi statis pada RootNavigator).
+  * [ ] Visibilitas bottom bar pada navigasi nyata di perangkat Android: bottom bar tersembunyi secara otomatis pada Detail dan Reader, serta baru muncul kembali saat kembali ke MainTabs (belum diuji di runtime native).
+  * [x] Parameter navigasi TypeScript tervalidasi ketat: `NovelDetail` wajib `{ novelId: string }`, `Reader` wajib `{ novelId: string; chapterId: string }` mendukung subjalur seperti `mtl/chapter-1` tanpa perubahan/encoding ganda; control negatif compile-time menolak parameter hilang atau tipe salah.
+  * [x] Tab bar menggunakan token warna semantik tri-tema datar solid, border atas 1dp `borderSubtle`, bebas dari blur/glassmorphism/glow, dan mempertahankan perilaku aksesibilitas bawaan navigator (`accessibilityRole="tab"`).
 * **Cara Verifikasi**:
-  * Jalankan navigasi di simulator/perangkat dan pastikan rute `Discover` $\rightarrow$ `NovelDetail` $\rightarrow$ `Reader` $\rightarrow$ kembali berfungsi tanpa glitch.
+  * Jalankan `npm run test:nav` (`node scripts/verify-navigation-setup.mjs`) untuk memvalidasi:
+    - Keberadaan seluruh 10 berkas navigasi dan layar placeholder.
+    - Ikon tab `auto_stories` dan `library_books` terdaftar sah pada glyphmap Material Symbols Rounded.
+    - Kompilasi programatik TypeScript nyata: valid rute lolos; kontrol negatif (NovelDetail tanpa novelId, NovelDetail tipe angka, Reader tanpa chapterId, nama rute fiktif) ditolak kompilator.
+    - Konsistensi pasangan data contoh (`btth` $\rightarrow$ `mtl/chapter-1`, `kimi` $\rightarrow$ `volume-1-chapter-1`) dan preservasi parameter tanpa encoding ganda.
+    - Konfigurasi `backBehavior="initialRoute"`, `headerShown: false`, dan dimensi minimum $48\times 48\text{dp}$.
+  * Jalankan `npm run typecheck:client` (`tsc --noEmit`) untuk validasi tipe komprehensif client.
+  * Jalankan `npx expo export --platform android` di `client/` untuk membuktikan kelancaran bundling bytecode Hermes (1287 modul ter-bundle).
+  * Jalankan `npm run check:contracts`, `npm run test:theme`, dan `npm run test:sqlite`.
+  * *Batas Verifikasi Runtime Android (Masih Tertunda)*:
+    - **Pemeriksaan Interaksi Nyata di Perangkat Belum Dijalankan**: Bundling Hermes dan verifikasi statis TypeScript tidak membuktikan perilaku runtime interaktif.
+    - Respons fisik sentuhan tombol tab $48\times 48\text{dp}$ pada layar sentuh Android sesungguhnya.
+    - Banner kegagalan storage pada runtime native: kepatuhan safe area atas (tidak tertutup status bar), ketiadaan inset ganda pada konten navigator, dan keterbacaan pengumuman TalkBack (`accessibilityLiveRegion="polite"`).
+    - Perilaku tombol Back hardware Android (`Library` $\rightarrow$ `Discover`, `Reader` $\rightarrow$ `Detail`).
+    - Animasi transisi layar native 60 FPS tanpa *frame drop* atau *white flash*.
+    - Pengucapan audio screen reader Android TalkBack untuk peran tab dan label aksesibilitas.
+    - Render visual glyph ikon font di atas canvas layar Android.
+    - Sesuai prinsip verifikasi, status `FON-05` dipertahankan **`IN_PROGRESS`** bersama `FON-03` dan `FON-04` hingga pengujian di perangkat/emulator Android dapat dilaksanakan.
 * **Referensi Acuan**: [PRD.md: Seksi 5.2](file:///d:/project/yomou/docs/PRD.md), [anti-patterns-ui.md: Seksi 3.9 & 3.16](file:///d:/project/yomou/docs/anti-patterns-ui.md).
 
 ---
