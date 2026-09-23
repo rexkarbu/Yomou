@@ -484,55 +484,117 @@ Berdasarkan inspeksi sistem berkas pada repositori `d:\project\yomou`:
 
 #### [BE-05] Implementasi In-Memory LRU Cache Service & Policy TTL
 * **Area**: Backend
-* **Status**: `TODO`
+* **Status**: `DONE`
 * **Tujuan**: Mengimplementasikan lapisan caching in-memory berbasis LRU dengan batas kapasitas dan kebijakan masa berlaku (*TTL*) per kategori data.
 * **Ruang Lingkup**:
-  * Mengintegrasikan pustaka `lru-cache` pada Node.js dengan batas maksimum **500 item** atau **100 MB**.
+  * Mengintegrasikan dependensi langsung `lru-cache@11.5.3` pada server. Batas **500 item** dan **100.000.000 byte** berlaku bersamaan; mencapai salah satunya memicu eviction LRU.
+  * Ukuran terhitung adalah `Buffer.byteLength(key, 'utf8') + Buffer.byteLength(body, 'utf8')`. Ini batas payload/key terserialisasi, bukan total heap/RSS proses Node.js. Entri terlalu besar tetap dikirim tanpa disimpan atau mengusir entri lain.
   * Konfigurasi TTL kesegaran data:
     * Popular: 6 jam
     * Latest: 15 menit
     * Search: 30 menit
     * Detail Novel: 12 jam
     * Konten Bab: 7 hari
-  * Middleware cache wrapper untuk handler endpoint Hono.js.
+  * Middleware cache wrapper untuk handler JSON GET publik Hono.js. Hanya HTTP 200 dengan envelope `success: true`, `error: null`, dan field `data` yang disimpan; array kosong sah tetap dapat di-cache.
+  * Cache key memakai JSON tuple provider name/baseUrl, operasi, query, halaman, novelId, chapterId. Validasi dijalankan sebelum lookup; query di-trim tanpa lowercasing dan ID subjalur bab dipertahankan.
+  * Body JSON disimpan sebagai string. `meta.cachedAt` adalah epoch milliseconds ketika respons berhasil disimpan; hit tidak memperbarui timestamp atau memperpanjang TTL. Metadata source/pagination dipertahankan.
+  * Error, non-JSON, respons private/no-store, Set-Cookie, dan respons yang sudah dikompresi tidak disimpan. Expired entry dianggap miss; kegagalan upstream tidak digantikan data stale.
 * **Dependensi**: `BE-01`.
 * **File/Area Terkait**:
-  * `server/src/services/cache.service.ts` [Usulan]
-  * `server/src/middlewares/cacheMiddleware.ts` [Usulan]
+  * `server/src/services/cache.service.ts`
+  * `server/src/middlewares/cacheMiddleware.ts`
+  * `scripts/verify-cache.mjs`
+  * `server/package.json`, `package.json`, `package-lock.json`
 * **Acceptance Criteria**:
-  * [ ] Request kedua untuk endpoint yang sama dalam rentang TTL mengembalikan data dari cache (latensi < 150 ms) dengan header/meta `cachedAt`.
-  * [ ] Melebihi 500 item atau 100 MB secara otomatis menghapus item paling jarang digunakan (*least recently used*).
+  * [x] Request kedua untuk endpoint mock yang sama dalam rentang TTL mengembalikan data dari cache (latensi < 150 ms) dengan `meta.cachedAt`; handler upstream hanya terpanggil satu kali.
+  * [x] Melebihi batas 500 item atau ukuran byte terhitung secara otomatis menghapus item paling jarang digunakan (*least recently used*).
 * **Cara Verifikasi**:
-  * Buat automated test yang memanggil fungsi cache 501 kali dan verifikasi bahwa jumlah item di memori tetap $\le 500$.
+  * `npm run test:cache` membangun server terlebih dahulu lalu menjalankan asersi Node.js dengan aplikasi Hono mock tanpa koneksi upstream.
+  * **Bukti Verifikasi (2026-09-23)**:
+    - `npm run test:cache`: Lulus. Insert 501 key menyisakan 500 entri; akses key lama menaikkan recency dan melindunginya dari eviction berikutnya.
+    - Batas ukuran diuji dengan cache 24 byte, termasuk teks Unicode; ukuran tetap dalam batas, item oversized dilewati, dan batas persis diuji. Default produksi 100.000.000 byte juga diasersi; tes tidak mengalokasikan payload 100 MB.
+    - TTL kelima operasi sesuai PRD; get/has tidak memperpanjang TTL. Expiry diuji dengan TTL pendek, lalu request memuat ulang upstream dan memperbarui cachedAt.
+    - Cache hit maksimum **0,06 ms** dari 30 request Hono in-process pada Windows x64, Node.js v24.21.0. Pengukuran mencakup konsumsi body; bukan benchmark HTTP jaringan atau Android.
+    - Key isolation, validasi sebelum hit, hasil kosong sah, preservasi metadata, body immutable, bypass POST/non-JSON/error/private, recovery kegagalan upstream, larangan stale fallback, dan oversized response lulus.
+    - Penambahan cachedAt menghapus Content-Length/ETag lama; header middleware luar tetap tersedia pada miss/hit.
+    - `npm run check:contracts`, `npm run test:http`, `npm run test:provider-feeds`, `npm run test:provider-details`, dan `npm run test:chapter-content`: Lulus. Test HTTP dijalankan ulang di luar sandbox setelah child process TypeScript diblokir EPERM; seluruh pemeriksaannya kemudian lulus.
+  * **Integrasi BE-06**: Import `cacheMiddleware` langsung dari modulnya. Pasang setelah validasi parameter dan sebelum handler provider. Resolver `(c) => CacheRequest` harus menggunakan parameter yang sama dengan handler, misalnya `{ operation: 'chapter', novelId, chapterId }`. Decode parameter rute hanya sekali, bukan di cache. Kelima route berbagi singleton `responseCache`; pengujian boleh menyuntikkan instance terisolasi.
+  * Header lintas-request seperti CORS/security diterapkan lewat middleware luar yang berjalan pada hit maupun miss; cache menyimpan body JSON saja. Kompresi, bila kelak digunakan, ditempatkan di luar middleware cache.
+  * **Batas Verifikasi**: Endpoint produksi tetap milik BE-06. Tidak menjalankan live Meionovels atau Android; provider/HTTP client tidak diubah. Cache ephemeral dan per-process, tanpa persistent storage, Redis, background refresh, atau penggabungan miss bersamaan. FON-03/FON-04 tetap `IN_PROGRESS`.
 * **Referensi Acuan**: [PRD.md: Seksi 8.2](file:///d:/project/yomou/docs/PRD.md).
 
 ---
 
 #### [BE-06] Implementasi Router REST API Hono.js & Middleware Error Handling
 * **Area**: Backend
-* **Status**: `TODO`
-* **Tujuan**: Mengekspos seluruh fungsionalitas provider melalui endpoint REST API standar dengan envelope seragam dan penanganan error.
+* **Status**: `DONE`
+* **Tujuan**: Mengekspos seluruh fungsionalitas provider melalui endpoint REST API standar dengan envelope seragam, integrasi cache LRU, sanitasi kebocoran informasi, dan penanganan error.
 * **Ruang Lingkup**:
-  * Setup Hono.js server di `server/src/index.ts`.
-  * Mendaftarkan rute:
+  * Pembuatan aplikasi Hono via factory `createApp(options?: { provider?, cache? })` di `server/src/app.ts`, terpisah dari proses `listen` di `server/src/index.ts` agar modul dapat diuji secara in-process tanpa membuka koneksi port TCP.
+  * Mendaftarkan rute dengan urutan deterministik (rute statis sebelum parameter):
     * `GET /api/novels/popular`
     * `GET /api/novels/latest`
     * `GET /api/novels/search`
     * `GET /api/novels/:novelId`
-    * `GET /api/novels/:novelId/chapters/:chapterId`
-  * Global error handler: memformat respons error terstandar (`{ success: false, data: null, error: { code, message, details } }`).
-  * Pemetaan kode status: 404 (`NOVEL_NOT_FOUND`, `CHAPTER_NOT_FOUND`), 422 (`CHAPTER_EMPTY_CONTENT`), 503 (`PROVIDER_UNAVAILABLE`), 504 (`PROVIDER_TIMEOUT`).
+    * `GET /api/novels/:novelId/chapters/:chapterId{.+$}` (wildcard regex parameter)
+  * Endpoint `GET /health` dipertahankan merespons format legacy `{ status: 'ok', service: 'yomou-server' }` sebagai pengecualian envelope API yang terdokumentasi.
+  * Integrasi `cacheMiddleware`: validasi parameter dieksekusi di dalam `resolveRequest` sebelum lookup cache; parameter yang diteruskan ke provider dan cache dipastikan 100% identik; emisi `meta.cachedAt` otomatis saat respons disimpan/diambil dari cache.
+  * Penanganan subjalur `chapterId` (`mtl/chapter-1`): Hono's `c.req.param()` melakukan URI decoding tepat satu kali tanpa pemanggilan `decodeURIComponent` kedua; slash literal dan encoded (%2F) terbukti menghasilkan `chapterId` dan cache key yang identik. Perilaku normalisasi literal `..` oleh standard URL/Request dicatat dan diuji terpisah.
+  * Validasi ketat parameter:
+    * `page`: wajib bilangan bulat desimal aman $\ge 1$; menolak string kosong, pecahan, eksponen, hex, dan overflow (> MAX_SAFE_INTEGER).
+    * Penolakan parameter `page` atau `q` berulang (multiple queries) untuk mencegah ambiguitas interpretasi.
+    * `q`: string tidak kosong setelah di-trim.
+    * Path traversal (`..%2Fchapter-1`, `mtl%2F..%2Fchapter-1`, double-encoded `%252e%252e`), double slash, leading/trailing slash ditolak dengan status HTTP 400 `BAD_REQUEST`.
+  * Penyelarasan kode error kanonik & normalisasi status publik: mematuhi 8 kode resmi `server/src/types/api.ts` dan `client/src/types/api.ts`: 400 (`BAD_REQUEST`), 404 (`PROVIDER_NOT_FOUND`), 422 (`CHAPTER_EMPTY_CONTENT`), 503 (`PROVIDER_BLOCKED` / `NETWORK_UNREACHABLE`), 504 (`PROVIDER_TIMEOUT`), 500 (`SCRAPER_PARSE_ERROR` / `INTERNAL_SERVER_ERROR`). Kode `NETWORK_UNREACHABLE` secara eksplisit dinormalisasi menjadi status 503 pada lapisan API publik, termasuk ketika `ProviderError` dari HTTP client membawa status internal 502.
+  * Keamanan pesan error & sanitasi semantik details: menggunakan pesan publik tetap (`PUBLIC_ERROR_MESSAGES`) berdasarkan `ErrorCode`, masking total terhadap generic exception tanpa membocorkan pesan sistem, string koneksi, atau URL upstream. Field `details` divalidasi ketat secara semantik: `novelId` dan `chapterId` kanonik, `page` safe integer positif, dan `direction` `'prev'|'next'`; menolak Windows path, URI berkredensial, dan objek bersarang. Peniadaan field `stack` terverifikasi.
+  * Penyelarasan metadata paginasi: endpoint `latest` dan `search` hanya menyertakan `page: pageNum` dan `source: provider.name`. Field `totalPages` dan `hasNextPage` dibiarkan `undefined` secara jujur dan terdokumentasi sebagai keterbatasan yang belum tersedia karena provider upstream belum melakukan scraping pagination bar (tidak menandai fitur paginasi penuh selesai).
 * **Dependensi**: `BE-02`, `BE-03`, `BE-04`, `BE-05`.
 * **File/Area Terkait**:
-  * `server/src/index.ts` [Usulan]
-  * `server/src/routes/novel.routes.ts` [Usulan]
-  * `server/src/middlewares/errorHandler.ts` [Usulan]
+  * `server/src/app.ts` [Selesai]
+  * `server/src/index.ts` [Selesai]
+  * `server/src/routes/novel.routes.ts` [Selesai]
+  * `server/src/middlewares/errorHandler.ts` [Selesai]
+  * `server/src/middlewares/cacheMiddleware.ts` [Selesai]
+  * `server/src/services/cache.service.ts` [Selesai]
+  * `scripts/verify-api-routes.mjs` [Selesai]
+  * `package.json` [Selesai - script `test:api` dan `test:api:live`]
 * **Acceptance Criteria**:
-  * [ ] Seluruh respons sukses memiliki format envelope `{ success: true, data: ..., error: null, meta: ... }`.
-  * [ ] Server merespons `CHAPTER_EMPTY_CONTENT` dengan status HTTP 422.
-  * [ ] Jika target website down, server merespons HTTP 503 dengan format JSON rapi tanpa bocoran stack trace internal.
+  * [x] Seluruh lima rute novel (`/popular`, `/latest`, `/search`, `/:novelId`, `/:novelId/chapters/:chapterId{.+$}`) dan `/health` terdaftar dan merespons format envelope resmi `ApiResponse<T>` (kecuali `/health` sebagai pengecualian khusus).
+  * [x] Format envelope sukses selalu memuat `{ success: true, data: T, error: null, meta: ApiMeta }`.
+  * [x] Format envelope error selalu memuat `{ success: false, data: null, error: ApiError, meta: ApiMeta }`.
+  * [x] `meta.source` mencerminkan nama provider (`'meionovel'`), dan `meta.cachedAt` terisi epoch timestamp milidetik ketika respons berhasil disimpan atau dilayani dari cache.
+  * [x] Nilai `chapterId` bersubjalur (`mtl/chapter-1`) dapat diakses baik menggunakan slash literal maupun slash terenkode URI (`%2F`), di-decode tepat satu kali, dan tervalidasi kanonik menghasilkan cache key yang identik.
+  * [x] Paginasi hanya menampilkan `page: number`; keterbatasan ketiadaan `totalPages` atau `hasNextPage` dari upstream diakui secara faktual tanpa mengarang nilainya.
+  * [x] Input tidak valid (halaman $\le 0$, desimal, eksponen, hex, overflow, query `q` kosong, parameter berulang, traversal path) ditolak dengan status HTTP 400 `BAD_REQUEST` sebelum proses scraping atau lookup cache.
+  * [x] Pemetaan kode galat mematuhi kontrak kanonik: 404 (`PROVIDER_NOT_FOUND`), 422 (`CHAPTER_EMPTY_CONTENT`), 503 (`PROVIDER_BLOCKED` / `NETWORK_UNREACHABLE`), 504 (`PROVIDER_TIMEOUT`), 500 (`SCRAPER_PARSE_ERROR` / `INTERNAL_SERVER_ERROR`). Termasuk normalisasi status 502 dari HTTP client menjadi 503 pada `NETWORK_UNREACHABLE`.
+  * [x] Rute yang tidak terdaftar menghasilkan status HTTP 404 dengan envelope terstruktur `PROVIDER_NOT_FOUND`.
+  * [x] Error handler global tidak membocorkan stack trace, path berkas internal, URL upstream rahasia, atau pesan galat sistem internal; details disanitasi semantik menolak Windows path, URI berkredensial, dan objek bersarang.
+  * [x] `createApp` terpisah dari proses listen server sehingga modul aplikasi dapat diimpor dalam tes in-process tanpa membuka koneksi port TCP.
+  * [x] Cache hit mengembalikan respons dalam $< 150\text{ ms}$ tanpa memanggil ulang upstream provider.
+  * [x] Seluruh pengujian offline (`npm run test:api`), pengujian smoke live (`npm run test:api:live`), pemeriksaan kontrak (`npm run check:contracts`), dan pengujian regresi BE-01 s.d. BE-05 lolos 100%.
 * **Cara Verifikasi**:
-  * Jalankan server `npm run -w server dev` dan lakukan pengujian HTTP request via curl / fetch ke seluruh rute.
+  * Jalankan `npm run test:api` (`npm run -w server build && node scripts/verify-api-routes.mjs`) untuk memvalidasi:
+    - Subtest 1: Endpoint `/health` (legacy envelope) dan 4 rute novel mengembalikan envelope sukses dengan `meta.source` dan `meta.cachedAt`.
+    - Subtest 2: Paginasi faktual (page disediakan, `totalPages` dan `hasNextPage` tidak dikarang).
+    - Subtest 3: Rute statis `/popular`, `/latest`, `/search` terdaftar sebelum `/:novelId`.
+    - Subtest 4: Subjalur `chapterId` (`mtl/chapter-1`) pada slash literal dan encoded slash `%2F` menghasilkan parameter dan cache key yang sama persis.
+    - Subtest 5: Validasi ketat: page integer desimal aman (menolak 0, negatif, pecahan, eksponen, hex, overflow), penolakan parameter `page`/`q` berulang, penolakan query kosong/spasi, penolakan traversal pada novelId dan chapterId (`..%2Fchapter-1`, `mtl%2F..%2Fchapter-1`, `%252e%252e`), penolakan consecutive/leading/trailing slash.
+    - Subtest 6: Masking informasi rahasia: URL upstream, token rahasia, path file internal `D:\...`, nama file `.ts`, dan stack trace terbukti tidak bocor ke client; pesan publik tetap berdasarkan ErrorCode; details disanitasi semantik menolak path Windows (`D:\...`), URI berkredensial (`postgresql://...`), float, dan nested object.
+    - Subtest 7: Normalisasi status publik: `NETWORK_UNREACHABLE` yang membawa status internal 502 dari HTTP client dinormalisasi menjadi HTTP 503 pada lapisan API.
+    - Subtest 8: Exception tak terduga (generic Error) di-masking penuh menjadi 500 `INTERNAL_SERVER_ERROR` tanpa membocorkan pesan internal.
+    - Subtest 9: Rute 404 tak terdaftar mengembalikan envelope `PROVIDER_NOT_FOUND`.
+    - Subtest 10: Pemetaan seluruh kode galat kanonik (422, 404, 503, 504, 500) ke status HTTP yang sesuai.
+    - Subtest 11: Cache hit terverifikasi $< 150\text{ ms}$ (aktual ~0.08 ms) tanpa pemanggilan provider; error upstream tidak di-cache; validasi input berjalan sebelum lookup cache.
+  * Jalankan `npm run test:api:live` (`npm run -w server build && node scripts/verify-api-routes.mjs --live`) untuk memvalidasi upstream nyata Meionovels:
+    - Live `/health` $\rightarrow$ 200 OK.
+    - Live `GET /api/novels/popular` $\rightarrow$ 200 OK (12 novel populer terverifikasi).
+    - Live `GET /api/novels/latest?page=1` $\rightarrow$ 200 OK (10 novel terbaru terverifikasi).
+    - Live `GET /api/novels/search?q=kimi` $\rightarrow$ 200 OK (12 hasil pencarian terverifikasi).
+    - Live `GET /api/novels/kimi-wa-boku-no-koukai-ln` $\rightarrow$ 200 OK (63 bab novel terverifikasi).
+    - Live `GET /api/novels/kimi-wa-boku-no-koukai-ln/chapters/volume-1-chapter-1` $\rightarrow$ 200 OK (90 blok terverifikasi).
+    - Live `GET /api/novels/btth/chapters/mtl/chapter-1` $\rightarrow$ 200 OK (subjalur MTL, 63 blok terverifikasi).
+    - Live `GET /api/novels/non-existent-novel-12345` $\rightarrow$ 404 `PROVIDER_NOT_FOUND`.
+  * *Batas Verifikasi In-Process*: Pengujian otomatis dieksekusi secara in-process menggunakan Hono `app.request(...)` tanpa binding port TCP jaringan. Pengujian ini memvalidasi router, middleware, envelope data, masking keamanan, dan integrasi provider/cache secara end-to-end pada level aplikasi. Integrasi UI Android dan koneksi HTTP jaringan melalui emulator/perangkat dialokasikan untuk Milestone 3 s.d. 7.
 * **Referensi Acuan**: [PRD.md: Seksi 8.1 & 8.3](file:///d:/project/yomou/docs/PRD.md).
 
 ---

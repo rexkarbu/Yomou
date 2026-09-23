@@ -344,6 +344,7 @@ Setiap endpoint backend merespons dengan format standar berikut:
   }
 }
 ```
+*(Catatan: Field `page` tersedia secara faktual; field `totalPages` dan `hasNextPage` bersifat opsional dan saat ini belum tersedia karena scraping pagination bar upstream belum diimplementasikan).*
 
 Format respon saat terjadi galat (*error*):
 ```json
@@ -430,7 +431,7 @@ Untuk memastikan verifikasi pengujian dapat diulang (*reproducible*) dan objekti
   * `server/src/types/blocks.ts`
 * **Kriteria Verifikasi Terukur**:
   * Endpoint `GET /api/novels/popular` merespons payload JSON dengan daftar novel terverifikasi; diuji dengan SLA-NAV-02 (cache hit) dan SLA-NAV-03 (cache miss).
-  * Endpoint `GET /api/novels/latest?page=1` menghasilkan daftar bab terbaru beserta metadata paginasi (`hasNextPage`, `totalPages`).
+  * Endpoint `GET /api/novels/latest?page=1` menghasilkan daftar bab novel terbaru beserta metadata paginasi yang tersedia secara faktual (`page` tersedia; `totalPages` dan `hasNextPage` belum tersedia karena provider upstream belum melakukan scraping pagination bar).
   * Endpoint `GET /api/novels/:novelId/chapters/:chapterId` mengekstrak tag `<h1>`–`<h6>` menjadi `HeadingBlock` dengan `level` 1–6, mengekstrak seluruh tag `<img>` ke array `images`, serta mengembalikan HTTP 422 (`CHAPTER_EMPTY_CONTENT`) jika tidak ada blok konten.
 
 ---
