@@ -630,23 +630,23 @@ Berdasarkan inspeksi sistem berkas pada repositori `d:\project\yomou`:
 
 #### [DIS-01] UI/UX Spesifikasi Layar Discover, Search, dan Detail Novel
 * **Area**: UI/UX
-* **Status**: `TODO`
+* **Status**: `IN_PROGRESS` (*Dokumen spesifikasi telah selesai direview dan diselaraskan; verifikasi runtime dependensi FON-04 masih tertunda*)
 * **Tujuan**: Merinci struktur tata letak, hierarki tipografi, dan penanganan seluruh state tampilan untuk layar Discover, Pencarian, dan Detail Novel sesuai pedoman anti-pattern.
 * **Ruang Lingkup**:
   * Menyusun spesifikasi layout Discover: Top bar ringkas (56dp), seksi horizontal "Novel Populer" dengan kartu rasio cover 2:3, dan seksi vertikal "Pembaruan Terbaru".
-  * Menyusun spesifikasi Search: Bilah pencarian datar dengan tombol bersihkan "X", hasil pencarian grid/list bersih.
-  * Menyusun spesifikasi Detail Novel: Header dua-sisi (cover 140dp di kiri, judul & genre di kanan), 3 tombol aksi (Mulai Baca, Bookmark, Unduh), dan daftar bab flat list dengan pembatas 1dp.
-  * Menentukan state tampilan: Loading skeleton, Empty state, Error state dengan tombol "Coba Lagi", dan Offline banner.
-* **Dependensi**: `FON-04`.
+  * Menyusun spesifikasi Search: Bilah pencarian datar dengan tombol bersihkan "X", debounce 400ms, useInfiniteQuery dengan query cancellation via AbortSignal, dan penanganan 6 kondisi tampilan (Idle, Pending Debounce, Loading, Success Non-Empty, Empty State, Error).
+  * Menyusun spesifikasi Detail Novel: Header dua-sisi responsif (cover 140dp [93×140dp rasio 2:3] di kiri, judul & genre di kanan), 3 tombol aksi (Mulai Baca, Bookmark, Unduh), sinopsis rata kiri yang dapat diperluas, dan daftar bab flat list dengan pembatas 1dp serta preservasi `chapterId` kanonik.
+  * Menentukan state tampilan: Loading skeleton, Empty state, Error state dengan tombol "Coba Lagi", dan Offline banner dengan integritas data SQLite tersimpan.
+* **Dependensi**: `FON-04` (*Dokumen spesifikasi DIS-01 telah selesai direview dan diselaraskan, sementara verifikasi runtime dependensi FON-04 masih tertunda*).
 * **File/Area Terkait**:
-  * `client/src/screens/discover/DiscoverSpec.md` [Usulan]
-  * `client/src/screens/detail/DetailSpec.md` [Usulan]
+  * `client/src/screens/discover/DiscoverSpec.md` [Selesai disusun & direview]
+  * `client/src/screens/detail/DetailSpec.md` [Selesai disusun & direview]
 * **Acceptance Criteria**:
-  * [ ] Bebas dari hero banner raksasa (> 50% viewport) dan kartu bento grid acak.
-  * [ ] Daftar bab direncanakan sebagai flat list datar berpemisah 1dp (bukan *card soup* dengan margin tebal per item).
-  * [ ] Seluruh tombol aksi memenuhi target sentuh $48 \times 48\text{ dp}$.
+  * [x] Bebas dari hero banner raksasa (> 50% viewport) dan kartu bento grid acak (`DiscoverSpec.md` Seksi 1.2 & anti-patterns 3.6/V-06).
+  * [x] Daftar bab direncanakan sebagai flat list datar berpemisah 1dp, bukan *card soup* dengan margin tebal per item (`DetailSpec.md` Seksi 2.2 & anti-patterns 3.7/5.2).
+  * [x] Seluruh tombol aksi memenuhi target sentuh minimal $48 \times 48\text{ dp}$ (`DiscoverSpec.md` Seksi 4.3 & `DetailSpec.md` Seksi 4).
 * **Cara Verifikasi**:
-  * Review dokumen spesifikasi terhadap checklist visual [anti-patterns-ui.md: Seksi 3.6, 3.7, 7.1](file:///d:/project/yomou/docs/anti-patterns-ui.md).
+  * Review dokumen spesifikasi terhadap checklist visual [anti-patterns-ui.md: Seksi 3.6, 3.7, 7.1](file:///d:/project/yomou/docs/anti-patterns-ui.md) dan kesesuaian kontrak endpoint backend [BE-06].
 * **Referensi Acuan**: [anti-patterns-ui.md: Seksi 5.1 & 5.2](file:///d:/project/yomou/docs/anti-patterns-ui.md).
 
 ---
