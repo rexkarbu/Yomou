@@ -653,25 +653,65 @@ Berdasarkan inspeksi sistem berkas pada repositori `d:\project\yomou`:
 
 #### [DIS-02] Implementasi Layar Discover (Beranda Novel Populer & Pembaruan Terbaru)
 * **Area**: Frontend
-* **Status**: `TODO`
-* **Tujuan**: Mengembangkan antarmuka layar Discover yang memuat feed Novel Populer dan Pembaruan Terbaru dari API backend.
+* **Status**: `IN_PROGRESS` (*Implementasi kode, boundary validation, apiClient timeout 12s, deduplikasi query, FlatList adaptif, dan ekspor bundel Hermes Android telah selesai diverifikasi secara otomatis; pengujian gestur fisik dan TalkBack di runtime Android masih tertunda*)
+* **Tujuan**: Mengembangkan antarmuka layar Discover yang memuat feed Novel Populer dan Pembaruan Terbaru dari API backend dengan validasi batas jaringan, ketahanan koneksi, dan arsitektur FlatList tunggal bebas nest warning.
 * **Ruang Lingkup**:
-  * Integrasi API `/api/novels/popular` dan `/api/novels/latest` menggunakan TanStack Query (`useQuery`).
-  * Komponen `NovelCard`: menampilkan cover novel (rasio 2:3), judul novel (maks 2 baris terpotong elipsis), nomor bab rilis terbaru, dan waktu relatif.
-  * Dukungan *pull-to-refresh* untuk memperbarui feed.
-  * Paginasi feed pembaruan terbaru via infinite scroll / pagination footer.
-* **Dependensi**: `FON-05`, `BE-06`, `DIS-01`.
+  * Konfigurasi Base URL eksplisit (`EXPO_PUBLIC_API_URL`) dengan validasi protokol HTTP(S), penolakan fallback localhost pada mode produksi, dan dokumentasi default Android emulator (`10.0.2.2:3000`).
+  * Lapisan transport `apiClient` mandiri dengan batas timeout client 12 detik (membersihkan timer/listener AbortSignal), penanganan envelope terstruktur, pemisahan kode error transport client (`NETWORK_FAILURE`, `CLIENT_TIMEOUT`, `REQUEST_CANCELLED`, `RESPONSE_MALFORMED`, `CONFIG_ERROR`) dari `ErrorCode` backend, serta larangan melabeli `TypeError` sebagai "Perangkat offline" tanpa pembuktian konektivitas.
+  * Validasi batas skema data (`validateNovelSummary`) memastikan field inti (`id`, `title`, `coverUrl`) tersedia; respon malformed tidak pernah diubah menjadi `[]` agar tidak disalahartikan sebagai akhir paginasi.
+  * Integrasi API `/api/novels/popular` dan `/api/novels/latest` menggunakan TanStack Query (`useQuery`, `useInfiniteQuery`) dengan kebijakan seragam `retry: false`.
+  * Deduplikasi data pembaruan terbaru berbasis `novel.id`, penghentian auto-fetch jika halaman hanya memuat ID duplikat (loop prevention), dan guard pemanggilan `fetchNextPage` saat refresh atau fetch lain aktif.
+  * Komponen tampilan:
+    * `NovelCard`: Kartu novel populer cover rasio 2:3 (100×150dp), fallback ikon `menu_book` jika cover gagal dimuat, target sentuh proporsional.
+    * `LatestFeedItem`: Baris feed pembaruan vertikal dengan cover rasio 2:3 (60×90dp), tinggi minimum adaptif 114dp (90dp cover + padding vertikal 24dp), pembatas 1dp tipis.
+    * `FeedSkeleton`: Skeletons tenang untuk carousel populer dan daftar vertikal tanpa layout shift liar.
+    * `DiscoverScreen`: Arsitektur FlatList vertikal tunggal dengan seksi Popular di `ListHeaderComponent` (menghindari VirtualizedLists nesting warning), top bar ringkas 56dp tanpa mock search input aktif, pemisahan empty state Popular dan Latest, penanganan pull-to-refresh yang mempertahankan data lama jika refresh gagal (banner diskrit kecil), dan penanganan offline dengan tombol pintasan "Buka Pustaka".
+* **Dependensi**: `FON-05`, `BE-06`, `DIS-01` (*Status FON-03, FON-04, FON-05, dan DIS-01 tetap dipertahankan IN_PROGRESS menunggu runtime Android*).
 * **File/Area Terkait**:
-  * `client/src/pages/HomeScreen.tsx` [Usulan]
-  * `client/src/components/novel/NovelCard.tsx` [Usulan]
-  * `client/src/components/novel/PopularNovelCarousel.tsx` [Usulan]
-  * `client/src/components/novel/LatestUpdatesList.tsx` [Usulan]
+  * `client/src/config/api.ts` [Selesai]
+  * `client/src/services/api/apiClient.ts` [Selesai]
+  * `client/src/services/api/novelApi.ts` [Selesai]
+  * `client/src/services/api/feedPagination.ts` [Selesai]
+  * `client/src/services/api/index.ts` [Selesai]
+  * `client/src/components/novel/NovelCard.tsx` [Selesai]
+  * `client/src/components/novel/LatestFeedItem.tsx` [Selesai]
+  * `client/src/components/novel/FeedSkeleton.tsx` [Selesai]
+  * `client/src/screens/discover/DiscoverScreen.tsx` [Selesai]
+  * `client/src/navigation/BottomTabNavigator.tsx` [Selesai - registrasi DiscoverScreen]
+  * `client/App.tsx` [Selesai - QueryClientProvider stabil di luar render cycle]
+  * `scripts/verify-discover-flow.mjs` [Selesai]
+  * `package.json` [Selesai - script `test:discover`]
 * **Acceptance Criteria**:
-  * [ ] Layar memuat daftar novel populer dan rilis terbaru dengan tata letak stabil tanpa layout shift liar.
-  * [ ] Menampilkan skeleton loading tenang saat memuat data awal.
-  * [ ] Menekan kartu novel melakukan navigasi ke `NovelDetailScreen` membawa parameter `novelId`.
+  * [x] Layar memuat daftar novel populer dan rilis terbaru dengan tata letak stabil tanpa layout shift liar (arsitektur FlatList tunggal ber-ListHeaderComponent).
+  * [x] Menampilkan skeleton loading tenang saat memuat data awal (`PopularCarouselSkeleton` dan `LatestFeedSkeleton`).
+  * [x] Menekan kartu novel melakukan navigasi ke `NovelDetailScreen` membawa parameter `novelId`.
 * **Cara Verifikasi**:
-  * Jalankan aplikasi di emulator Android, periksa pemuatan feed, dan verifikasi transisi ke layar detail novel.
+  * Jalankan `npm run test:discover` (`node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./scripts/register-ts-loader.mjs --experimental-strip-types scripts/verify-discover-flow.mjs`) untuk memvalidasi:
+    - Resolusi Base URL eksplisit & validasi protokol HTTP/HTTPS; penolakan ketiadaan URL pada mode produksi.
+    - Penolakan konversi data malformed menjadi `[]`.
+    - Validasi ketat envelope API terhadap 8 `ErrorCode` kanonik, validasi `data: null` pada error, dan validasi `meta` opsional.
+    - Diferensiasi error transport (`NETWORK_FAILURE` dengan pesan "Tidak dapat menghubungi server", `CLIENT_TIMEOUT` dengan durasi terskala 50ms, `REQUEST_CANCELLED` AbortSignal tanpa pelaporan banner).
+    - Paginasi melalui modul produksi bersama (`deduplicateNovels`, `calculateNextPageParam`, `evaluateFeedEndReason`).
+    - Pembedaan alasan akhir feed (`EXHAUSTED` -> "Semua pembaruan telah dimuat.", `NO_NEW_ITEMS` -> "Tidak ada novel baru.").
+    - Siklus InfiniteQueryObserver riil (Halaman 1 sukses -> Halaman 2 gagal dengan retensi Halaman 1 -> Retry Halaman 2 sukses menggabungkan dan menduplikasi data di cache).
+    - Retensi data query cache saat refetch gagal beserta logika pelaporan pesan spesifik per seksi.
+    - Konfigurasi komponen: FlatList `ListHeaderComponent` diberikan elemen ter-render stabil (bukan function ComponentType), top bar tanpa mock search input aktif, tinggi minimum baris 114dp, pemisahan empty state, tema switcher aksesibel, dan QueryClient stabil di luar render cycle.
+  * Jalankan `npm run typecheck:client` (`tsc --noEmit`): Lolos 0 galat.
+  * Jalankan `npm run check:contracts`: Lolos kesetaraan kontrak 100%.
+  * Jalankan `npm run test:nav`: Lolos verifikasi navigasi rute & registrasi `DiscoverScreen`.
+  * Jalankan `npm run test:theme`: Lolos kontras AAA/AA seluruh token & aksesibilitas.
+  * Jalankan `npm run test:sqlite`: Lolos skema database & relasional integritas.
+  * Jalankan `npx expo export --platform android` di `client`: Bundel Android Hermes (`.hbc`) berhasil dikompilasi (1340 modul).
+  * *Batas Verifikasi Runtime Android (Tertunda)*:
+    - Tes Node/Hermes di atas hanya membuktikan kontrak data, paginasi melalui InfiniteQueryObserver, validasi envelope, cancellation aktif, dan timeout terskala 50ms.
+    - Tampilan banner secara visual di layar, retensi visual posisi gulir carousel, dan respon sentuh/gestur Android belum dapat dibuktikan oleh tes Node.
+    - Deteksi status luring aktual belum tersedia (memerlukan paket konektivitas Expo terpisah di masa depan); `NETWORK_FAILURE` membuktikan kegagalan komunikasi jaringan dan bukan bukti perangkat offline.
+    - Pengujian cleartext HTTP aktual pada ponsel Android 9+ fisik (memerlukan `EXPO_PUBLIC_API_URL` LAN IP atau port forwarding `adb reverse`).
+    - Gestur *pull-to-refresh* dan haptic feedback native di perangkat sentuh Android.
+    - Inersia scroll horizontal swipe pada carousel Novel Populer di layar sentuh fisik.
+    - Pengumuman suara TalkBack untuk kartu novel, judul, dan status refresh.
+    - Decoding dan caching gambar live di memori perangkat rendah.
+    - Sesuai prinsip verifikasi integritas, status `DIS-02` dicatat **`IN_PROGRESS`** bersama `FON-03`, `FON-04`, `FON-05`, dan `DIS-01` hingga pengujian di perangkat/emulator Android dapat dilaksanakan.
 * **Referensi Acuan**: [PRD.md: Seksi 3.5](file:///d:/project/yomou/docs/PRD.md), [anti-patterns-ui.md: Seksi 5.1](file:///d:/project/yomou/docs/anti-patterns-ui.md).
 
 ---

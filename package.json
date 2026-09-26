@@ -18,6 +18,7 @@
     "test:theme": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/verify-theme-primitives.mjs",
     "test:sqlite": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/verify-sqlite-schema.mjs && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/verify-filesystem-paths.mjs",
     "test:nav": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/verify-navigation-setup.mjs",
+    "test:discover": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./scripts/register-ts-loader.mjs --experimental-strip-types scripts/verify-discover-flow.mjs",
     "test:cache": "npm run -w server build && node scripts/verify-cache.mjs",
     "test:http": "npm run -w server build && node scripts/verify-http-resilience.mjs",
     "test:provider-feeds": "npm run -w server build && node scripts/verify-meionovel-scraper.mjs",

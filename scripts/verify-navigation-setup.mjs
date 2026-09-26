@@ -21,6 +21,7 @@ const navFiles = [
   'src/navigation/BottomTabNavigator.tsx',
   'src/navigation/RootNavigator.tsx',
   'src/navigation/index.ts',
+  'src/screens/discover/DiscoverScreen.tsx',
   'src/screens/discover/DiscoverPlaceholderScreen.tsx',
   'src/screens/library/LibraryPlaceholderScreen.tsx',
   'src/screens/detail/NovelDetailPlaceholderScreen.tsx',
@@ -33,7 +34,7 @@ for (const relPath of navFiles) {
   const fullPath = path.join(clientDir, relPath);
   assert(fs.existsSync(fullPath), `Expected file to exist: ${relPath}`);
 }
-console.log('✔ All 10 navigation & placeholder screen files exist');
+console.log('✔ All 11 navigation & screen files (including real DiscoverScreen) exist');
 
 // ---------------------------------------------------------------------------
 // 2. Verify Tab Icons from Official Material Symbols Glyph Map
@@ -235,9 +236,10 @@ const tabContent = fs.readFileSync(
   'utf8'
 );
 assert(tabContent.includes('backBehavior="initialRoute"'), 'BottomTabNavigator must set backBehavior="initialRoute"');
+assert(tabContent.includes('component={DiscoverScreen}'), 'BottomTabNavigator must wire real DiscoverScreen');
 assert(tabContent.includes('minHeight: 48') && tabContent.includes('minWidth: 48'), 'tabBarItemStyle must enforce minHeight: 48 and minWidth: 48');
 assert(!tabContent.includes('blur(') && !tabContent.includes('backdropFilter'), 'BottomTabNavigator must not use glassmorphism / blur');
-console.log('✔ BottomTabNavigator backBehavior="initialRoute" and 48dp min touch targets configured');
+console.log('✔ BottomTabNavigator backBehavior="initialRoute", real DiscoverScreen, and 48dp min touch targets configured');
 
 const rootNavContent = fs.readFileSync(
   path.join(clientDir, 'src/navigation/RootNavigator.tsx'),

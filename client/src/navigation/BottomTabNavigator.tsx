@@ -3,7 +3,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { Icon } from '../components/common/Icon';
-import { DiscoverPlaceholderScreen } from '../screens/discover/DiscoverPlaceholderScreen';
+import { DiscoverScreen } from '../screens/discover/DiscoverScreen';
 import { LibraryPlaceholderScreen } from '../screens/library/LibraryPlaceholderScreen';
 import type { MainTabParamList } from './types';
 
@@ -49,7 +49,7 @@ export const BottomTabNavigator: React.FC = () => {
     >
       <Tab.Screen
         name="Discover"
-        component={DiscoverPlaceholderScreen}
+        component={DiscoverScreen}
         options={{
           tabBarLabel: 'Discover',
           tabBarAccessibilityLabel: 'Tab Discover: Jelajahi novel',

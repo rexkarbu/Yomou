@@ -9,8 +9,17 @@ import {
 import { NavigationContainer, Theme } from '@react-navigation/native';
 import { initStorage } from './src/services/storage';
 import { ThemeProvider, useTheme } from './src/context/ThemeContext';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import { Typography, Icon } from './src/components/common';
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: false,
+    },
+  },
+});
 
 function NavigationRoot() {
   const [initError, setInitError] = useState<string | null>(null);
@@ -93,9 +102,11 @@ function NavigationRoot() {
 export default function App() {
   return (
     <SafeAreaProvider>
-      <ThemeProvider>
-        <NavigationRoot />
-      </ThemeProvider>
+      <QueryClientProvider client={queryClient}>
+        <ThemeProvider>
+          <NavigationRoot />
+        </ThemeProvider>
+      </QueryClientProvider>
     </SafeAreaProvider>
   );
 }
