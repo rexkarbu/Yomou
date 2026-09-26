@@ -117,19 +117,69 @@ export async function getPopularNovels(options?: RequestOptions): Promise<NovelS
 }
 
 /**
+ * Memvalidasi parameter halaman.
+ * Harus berupa bilangan bulat positif aman (>= 1).
+ * Menolak input non-integer, <= 0, NaN, Infinity, atau non-number tanpa mutasi diam-diam.
+ */
+export function validatePageParam(page: unknown): number {
+  if (typeof page !== 'number' || !Number.isSafeInteger(page) || page < 1) {
+    throw new AppError(
+      'BAD_REQUEST',
+      'Parameter "page" harus berupa bilangan bulat positif aman.',
+      400,
+      null,
+      true
+    );
+  }
+  return page;
+}
+
+/**
  * Mengambil daftar pembaruan terbaru dari endpoint GET /api/novels/latest?page={page}
  */
 export async function getLatestNovels(
   page: number = 1,
   options?: RequestOptions
 ): Promise<NovelSummary[]> {
-  const safePage = Math.max(1, Math.floor(page));
+  const safePage = validatePageParam(page);
   const response = await apiRequest<unknown>(`/api/novels/latest?page=${safePage}`, options);
 
   if (!Array.isArray(response.data)) {
     throw new AppError(
       'RESPONSE_MALFORMED',
       'Data pembaruan terbaru pada envelope sukses bukan berupa array.',
+      0,
+      null,
+      true
+    );
+  }
+
+  return response.data.map(validateNovelSummary);
+}
+
+/**
+ * Mencari novel berdasarkan kata kunci judul dari endpoint GET /api/novels/search?q={query}&page={page}
+ */
+export async function searchNovels(
+  query: string,
+  page: number = 1,
+  options?: RequestOptions
+): Promise<NovelSummary[]> {
+  const safePage = validatePageParam(page);
+  const trimmed = query.trim();
+  if (trimmed === '') {
+    return [];
+  }
+  const encodedQuery = encodeURIComponent(trimmed);
+  const response = await apiRequest<unknown>(
+    `/api/novels/search?q=${encodedQuery}&page=${safePage}`,
+    options
+  );
+
+  if (!Array.isArray(response.data)) {
+    throw new AppError(
+      'RESPONSE_MALFORMED',
+      'Data hasil pencarian pada envelope sukses bukan berupa array.',
       0,
       null,
       true

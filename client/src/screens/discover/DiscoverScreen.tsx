@@ -1,13 +1,18 @@
-import React, { useMemo, useState, useCallback } from 'react';
+import React, { useMemo, useState, useCallback, useRef, useEffect } from 'react';
 import {
   View,
   FlatList,
   StyleSheet,
   RefreshControl,
   ActivityIndicator,
+  TextInput,
+  Pressable,
+  Keyboard,
+  BackHandler,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQuery, useInfiniteQuery } from '@tanstack/react-query';
+import { useFocusEffect } from '@react-navigation/native';
 import { useTheme } from '../../context/ThemeContext';
 import { Typography, Button, Icon, Surface } from '../../components/common';
 import { NovelCard } from '../../components/novel/NovelCard';
@@ -16,13 +21,18 @@ import {
   PopularCarouselSkeleton,
   LatestFeedSkeleton,
 } from '../../components/novel/FeedSkeleton';
-import { getPopularNovels, getLatestNovels } from '../../services/api/novelApi';
+import { getPopularNovels, getLatestNovels, searchNovels } from '../../services/api/novelApi';
 import {
   deduplicateNovels,
   calculateNextPageParam,
   evaluateFeedEndReason,
   getFeedEndMessage,
+  getSearchEndMessage,
 } from '../../services/api/feedPagination';
+import {
+  resolveSearchUiState,
+  SearchDebounceManager,
+} from './searchState';
 import { AppError } from '../../services/api/apiClient';
 import { SPACING, RADIUS } from '../../styles/theme';
 import type { MainTabScreenProps } from '../../navigation/types';
@@ -35,7 +45,100 @@ export const DiscoverScreen: React.FC<MainTabScreenProps<'Discover'>> = ({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
 
-  // 1. Query Novel Populer (Horizontal Carousel) - Retry dinonaktifkan
+  // State pencarian
+  const [rawInput, setRawInput] = useState('');
+  const [debouncedQuery, setDebouncedQuery] = useState('');
+  const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
+  const inputRef = useRef<TextInput>(null);
+
+  // Pengelola debounce berbasis kelas produksi
+  const debounceManagerRef = useRef<SearchDebounceManager | null>(null);
+  if (!debounceManagerRef.current) {
+    debounceManagerRef.current = new SearchDebounceManager(400, (committed) => {
+      setDebouncedQuery(committed);
+    });
+  }
+
+  // Bersihkan timer saat unmount
+  useEffect(() => {
+    return () => {
+      debounceManagerRef.current?.destroy();
+    };
+  }, []);
+
+  // Pantau kemunculan keyboard virtual
+  useEffect(() => {
+    const showSub = Keyboard.addListener('keyboardDidShow', () => setIsKeyboardVisible(true));
+    const hideSub = Keyboard.addListener('keyboardDidHide', () => setIsKeyboardVisible(false));
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
+  // Perilaku tombol hardware Back Android:
+  // 1. Back menutup keyboard terlebih dahulu jika terbuka.
+  // 2. Saat keyboard sudah tertutup dan Search aktif, Back membersihkan pencarian kembali ke Beranda.
+  // 3. Setelah di Beranda, gunakan navigasi default (return false).
+  // Handler hanya aktif saat layar Discover sedang fokus dan dibersihkan saat blur/unmount.
+  useFocusEffect(
+    useCallback(() => {
+      const onBackPress = () => {
+        if (isKeyboardVisible) {
+          Keyboard.dismiss();
+          return true;
+        }
+        if (rawInput.trim().length > 0 || debouncedQuery.length > 0) {
+          debounceManagerRef.current?.clear();
+          setRawInput('');
+          setDebouncedQuery('');
+          return true;
+        }
+        return false;
+      };
+
+      const subscription = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+      return () => {
+        subscription.remove();
+      };
+    }, [isKeyboardVisible, rawInput, debouncedQuery])
+  );
+
+  // Penanganan perubahan input teks pencarian
+  const onInputChange = useCallback((text: string) => {
+    setRawInput(text);
+    debounceManagerRef.current?.setInput(text);
+  }, []);
+
+  // Tombol bersihkan ("X"): batalkan timer, reset query, pertahankan fokus input untuk mengetik ulang
+  const onClearSearch = useCallback(() => {
+    debounceManagerRef.current?.clear();
+    setRawInput('');
+    setDebouncedQuery('');
+    inputRef.current?.focus();
+  }, []);
+
+  // Tombol "Kembali ke Beranda": menutup keyboard dan membersihkan pencarian
+  const onReturnHome = useCallback(() => {
+    Keyboard.dismiss();
+    debounceManagerRef.current?.clear();
+    setRawInput('');
+    setDebouncedQuery('');
+  }, []);
+
+  // Penggantian tema tunggal yang menggilir Light -> Dark -> Sepia -> Light
+  const cycleTheme = useCallback(() => {
+    setTheme(theme === 'light' ? 'dark' : theme === 'dark' ? 'sepia' : 'light');
+  }, [theme, setTheme]);
+
+  const currentThemeLabel = theme === 'light' ? 'Light' : theme === 'dark' ? 'Dark' : 'Sepia';
+  const nextThemeLabel = theme === 'light' ? 'Dark' : theme === 'dark' ? 'Sepia' : 'Light';
+
+  // Mode pencarian aktif jika input teks setelah di-trim tidak kosong
+  const isSearchMode = rawInput.trim().length > 0;
+  const isPendingDebounce = isSearchMode && rawInput.trim() !== debouncedQuery;
+
+  // 1. Query Novel Populer (Horizontal Carousel) - Beranda
   const popularQuery = useQuery({
     queryKey: ['novels', 'popular'],
     queryFn: ({ signal }) => getPopularNovels({ signal }),
@@ -43,7 +146,7 @@ export const DiscoverScreen: React.FC<MainTabScreenProps<'Discover'>> = ({
     staleTime: 1000 * 60 * 15, // 15 menit
   });
 
-  // 2. Query Pembaruan Terbaru (Infinite Scroll Vertikal) - Retry dinonaktifkan
+  // 2. Query Pembaruan Terbaru (Infinite Scroll Vertikal) - Beranda
   const latestQuery = useInfiniteQuery({
     queryKey: ['novels', 'latest'],
     queryFn: ({ pageParam = 1, signal }) => getLatestNovels(pageParam, { signal }),
@@ -53,13 +156,33 @@ export const DiscoverScreen: React.FC<MainTabScreenProps<'Discover'>> = ({
     staleTime: 1000 * 60 * 5, // 5 menit
   });
 
-  // 3. Deduplikasi data pembaruan terbaru berbasis novel.id menggunakan fungsi produksi bersama
+  // 3. Query Pencarian Novel (Infinite Scroll Vertikal)
+  // Aturan Query selama debounce:
+  // enabled: isSearchMode && !isPendingDebounce && debouncedQuery.length > 0
+  // Query key dan parameter request menggunakan kata kunci trim yang identik (debouncedQuery).
+  const searchQuery = useInfiniteQuery({
+    queryKey: ['novels', 'search', debouncedQuery],
+    queryFn: ({ pageParam = 1, signal }) => searchNovels(debouncedQuery, pageParam, { signal }),
+    initialPageParam: 1,
+    getNextPageParam: (lastPage, allPages) => calculateNextPageParam(lastPage, allPages),
+    enabled: isSearchMode && !isPendingDebounce && debouncedQuery.length > 0,
+    retry: false,
+    staleTime: 1000 * 60 * 5, // 5 menit
+  });
+
+  // Deduplikasi data pembaruan terbaru berbasis novel.id
   const latestNovels = useMemo(() => {
     if (!latestQuery.data?.pages) return [];
     return deduplicateNovels(latestQuery.data.pages);
   }, [latestQuery.data?.pages]);
 
-  // Evaluasi alasan penghentian feed paginasi
+  // Deduplikasi data hasil pencarian berbasis novel.id
+  const searchNovelsList = useMemo(() => {
+    if (!searchQuery.data?.pages) return [];
+    return deduplicateNovels(searchQuery.data.pages);
+  }, [searchQuery.data?.pages]);
+
+  // Evaluasi penghentian feed Beranda
   const feedEndReason = useMemo(() => {
     return evaluateFeedEndReason(latestQuery.data?.pages);
   }, [latestQuery.data?.pages]);
@@ -68,6 +191,38 @@ export const DiscoverScreen: React.FC<MainTabScreenProps<'Discover'>> = ({
     return getFeedEndMessage(feedEndReason);
   }, [feedEndReason]);
 
+  // Evaluasi penghentian feed Pencarian
+  const searchEndReason = useMemo(() => {
+    return evaluateFeedEndReason(searchQuery.data?.pages);
+  }, [searchQuery.data?.pages]);
+
+  const searchEndMessage = useMemo(() => {
+    return getSearchEndMessage(searchEndReason);
+  }, [searchEndReason]);
+
+  // Status tampilan pencarian melalui fungsi produksi deterministik
+  const searchUiState = useMemo(() => {
+    return resolveSearchUiState({
+      rawInput,
+      debouncedQuery,
+      isLoading: searchQuery.isLoading,
+      isSuccess: searchQuery.isSuccess,
+      isError: searchQuery.isError,
+      isRefetchError: searchQuery.isRefetchError,
+      error: searchQuery.error,
+      items: searchNovelsList,
+    });
+  }, [
+    rawInput,
+    debouncedQuery,
+    searchQuery.isLoading,
+    searchQuery.isSuccess,
+    searchQuery.isError,
+    searchQuery.isRefetchError,
+    searchQuery.error,
+    searchNovelsList,
+  ]);
+
   const onNovelPress = useCallback(
     (novelId: string) => {
       navigation.navigate('NovelDetail', { novelId });
@@ -75,9 +230,8 @@ export const DiscoverScreen: React.FC<MainTabScreenProps<'Discover'>> = ({
     [navigation]
   );
 
-  // 4. Pull-to-refresh dengan guard concurrency, pengecekan hasil, dan pelaporan spesifik
+  // Pull-to-refresh untuk Beranda Discover
   const onRefresh = useCallback(async () => {
-    // Cegah tabrakan: jangan refresh saat fetchNextPage sedang berjalan
     if (isRefreshing || latestQuery.isFetchingNextPage) {
       return;
     }
@@ -113,13 +267,31 @@ export const DiscoverScreen: React.FC<MainTabScreenProps<'Discover'>> = ({
     }
   }, [isRefreshing, latestQuery, popularQuery]);
 
-  // 5. Guard pemanggilan fetchNextPage saat request lain (termasuk refresh dan error page) berjalan
+  // Pull-to-refresh / retry refresh untuk Pencarian dengan guard request berjalan
+  const onSearchRefresh = useCallback(async () => {
+    if (
+      isRefreshing ||
+      searchQuery.isFetching ||
+      searchQuery.isFetchingNextPage
+    ) {
+      return;
+    }
+
+    setIsRefreshing(true);
+    try {
+      await searchQuery.refetch();
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [isRefreshing, searchQuery]);
+
+  // Guard pemanggilan fetchNextPage pada Beranda
   const onEndReached = useCallback(() => {
     if (
       isRefreshing ||
       latestQuery.isFetching ||
       latestQuery.isFetchingNextPage ||
-      latestQuery.isFetchNextPageError || // Hentikan pemicu otomatis setelah fetch gagal sampai Coba Lagi ditekan
+      latestQuery.isFetchNextPageError ||
       !latestQuery.hasNextPage
     ) {
       return;
@@ -127,7 +299,7 @@ export const DiscoverScreen: React.FC<MainTabScreenProps<'Discover'>> = ({
     latestQuery.fetchNextPage();
   }, [isRefreshing, latestQuery]);
 
-  // Tombol retry pagination memakai guard fetch yang sama persis
+  // Tombol retry pagination Beranda
   const onRetryNextPage = useCallback(() => {
     if (
       isRefreshing ||
@@ -139,7 +311,33 @@ export const DiscoverScreen: React.FC<MainTabScreenProps<'Discover'>> = ({
     latestQuery.fetchNextPage();
   }, [isRefreshing, latestQuery]);
 
-  // Evaluasi kondisi offline total HANYA jika TIDAK ADA data sama sekali
+  // Guard pemanggilan fetchNextPage pada Pencarian
+  const onSearchEndReached = useCallback(() => {
+    if (
+      isRefreshing ||
+      searchQuery.isFetching ||
+      searchQuery.isFetchingNextPage ||
+      searchQuery.isFetchNextPageError || // Hentikan auto-fetch saat pagination gagal sampai retry ditekan
+      !searchQuery.hasNextPage
+    ) {
+      return;
+    }
+    searchQuery.fetchNextPage();
+  }, [isRefreshing, searchQuery]);
+
+  // Tombol retry pagination Pencarian
+  const onRetrySearchNextPage = useCallback(() => {
+    if (
+      isRefreshing ||
+      searchQuery.isFetching ||
+      searchQuery.isFetchingNextPage
+    ) {
+      return;
+    }
+    searchQuery.fetchNextPage();
+  }, [isRefreshing, searchQuery]);
+
+  // Evaluasi offline total Beranda HANYA jika tidak ada data sama sekali
   const hasPopularData = Boolean(popularQuery.data && popularQuery.data.length > 0);
   const hasLatestData = latestNovels.length > 0;
   const hasNoData = !hasPopularData && !hasLatestData;
@@ -149,11 +347,10 @@ export const DiscoverScreen: React.FC<MainTabScreenProps<'Discover'>> = ({
     (popularQuery.error instanceof AppError && popularQuery.error.code === 'NETWORK_FAILURE') ||
     (latestQuery.error instanceof AppError && latestQuery.error.code === 'NETWORK_FAILURE');
 
-  // Elemen Header List (Memoized Element untuk mencegah remount carousel pada FlatList induk)
+  // Elemen Header List Beranda
   const listHeaderElement = useMemo(() => {
     return (
       <View style={styles.headerContainer}>
-        {/* Banner Galat Refresh Ringkas (Data lama tetap tampil di bawahnya) */}
         {refreshError && (
           <View
             style={[
@@ -169,7 +366,6 @@ export const DiscoverScreen: React.FC<MainTabScreenProps<'Discover'>> = ({
           </View>
         )}
 
-        {/* Seksi Horizontal: Novel Populer */}
         <View style={styles.sectionContainer}>
           <View style={styles.sectionHeaderRow}>
             <Typography variant="title" color="primary">
@@ -210,20 +406,16 @@ export const DiscoverScreen: React.FC<MainTabScreenProps<'Discover'>> = ({
           )}
         </View>
 
-        {/* Garis Pemisah Antar Seksi */}
         <View style={[styles.sectionDivider, { backgroundColor: colors.borderSubtle }]} />
 
-        {/* Header Seksi Pembaruan Terbaru */}
         <View style={styles.sectionHeaderRow}>
           <Typography variant="title" color="primary">
             Pembaruan Terbaru
           </Typography>
         </View>
 
-        {/* Skeleton saat awal memuat Pembaruan Terbaru */}
         {latestQuery.isLoading && !hasLatestData && <LatestFeedSkeleton />}
 
-        {/* Inline Error saat awal memuat Pembaruan Terbaru gagal (tanpa data sebelumnya) */}
         {latestQuery.isError && !hasLatestData && (
           <Surface variant="card" style={styles.inlineErrorCard}>
             <Icon name="error" size={24} color={colors.statusError} accessibilityLabel="Galat pembaruan terbaru" />
@@ -259,7 +451,7 @@ export const DiscoverScreen: React.FC<MainTabScreenProps<'Discover'>> = ({
     refreshError,
   ]);
 
-  // Elemen Footer List (Memoized Element)
+  // Elemen Footer List Beranda
   const listFooterElement = useMemo(() => {
     if (latestQuery.isFetchingNextPage) {
       return (
@@ -309,7 +501,7 @@ export const DiscoverScreen: React.FC<MainTabScreenProps<'Discover'>> = ({
     onRetryNextPage,
   ]);
 
-  // Elemen Empty List untuk Pembaruan Terbaru (Memoized Element)
+  // Elemen Empty List Beranda
   const listEmptyElement = useMemo(() => {
     if (latestQuery.isLoading || latestQuery.isError) return null;
 
@@ -323,60 +515,97 @@ export const DiscoverScreen: React.FC<MainTabScreenProps<'Discover'>> = ({
     );
   }, [colors.textSecondary, latestQuery.isError, latestQuery.isLoading]);
 
-  // Jika kondisi error total pada awal buka tanpa data sesi dan gagal jaringan:
-  if (hasNoData && isTotalError && isNetworkFailure) {
+  // Elemen Header List Hasil Pencarian: "{N} novel dimuat" & banner refetch galat
+  const searchListHeaderElement = useMemo(() => {
+    const refetchError =
+      searchUiState.type === 'SUCCESS' ? searchUiState.refetchError : null;
+
     return (
-      <View
-        style={[
-          styles.container,
-          {
-            backgroundColor: colors.surfaceBackground,
-            paddingTop: insets.top,
-          },
-        ]}
-      >
-        {/* Top App Bar 56dp */}
-        <View
-          style={[
-            styles.topBar,
-            {
-              backgroundColor: colors.surfaceRaised,
-              borderBottomColor: colors.borderSubtle,
-            },
-          ]}
-        >
-          <Typography variant="headline" color="primary">
-            Discover
-          </Typography>
-        </View>
-
-        <View style={styles.offlineStateContainer}>
-          <Icon name="error" size={56} color={colors.textSecondary} accessibilityLabel="Tidak dapat menghubungi server" />
-          <Typography variant="title" color="primary" style={styles.offlineTitle}>
-            Tidak Dapat Menghubungi Server
-          </Typography>
-          <Typography variant="body" color="secondary" style={styles.offlineDesc}>
-            Gagal menyambung ke server backend. Periksa koneksi internet atau buka Pustaka Anda untuk membaca novel lokal.
-          </Typography>
-
-          <View style={styles.offlineActionRow}>
-            <Button
-              variant="filled"
-              title="Buka Pustaka"
-              onPress={() => navigation.navigate('Library')}
-              icon="library_books"
-            />
+      <View style={styles.searchHeaderContainer}>
+        {refetchError && (
+          <View
+            style={[
+              styles.smallBanner,
+              { backgroundColor: colors.surfaceRaised, borderColor: colors.statusError },
+            ]}
+            accessibilityRole="alert"
+          >
+            <Icon name="info" size={16} color={colors.statusError} accessibilityLabel="Pemberitahuan galat" />
+            <Typography variant="caption" color="secondary" style={styles.bannerText}>
+              Gagal menyegarkan: {refetchError}. Menampilkan hasil sebelumnya.
+            </Typography>
             <Button
               variant="outlined"
               title="Coba Lagi"
-              onPress={onRefresh}
-              icon="refresh"
+              onPress={onSearchRefresh}
+              style={styles.retryButtonSmall}
             />
           </View>
+        )}
+        <View style={styles.searchCountContainer}>
+          <Typography variant="label" color="secondary">
+            {searchNovelsList.length} novel dimuat
+          </Typography>
         </View>
       </View>
     );
-  }
+  }, [
+    colors.statusError,
+    colors.surfaceRaised,
+    onSearchRefresh,
+    searchNovelsList.length,
+    searchUiState,
+  ]);
+
+  // Elemen Footer List Hasil Pencarian
+  const searchListFooterElement = useMemo(() => {
+    if (searchQuery.isFetchingNextPage) {
+      return (
+        <View style={styles.footerLoader} accessibilityRole="progressbar">
+          <ActivityIndicator size="small" color={colors.accentPrimary} />
+          <Typography variant="caption" color="secondary" style={styles.footerText}>
+            Memuat halaman berikutnya...
+          </Typography>
+        </View>
+      );
+    }
+
+    if (searchQuery.isFetchNextPageError) {
+      return (
+        <View style={styles.footerErrorContainer}>
+          <Typography variant="caption" color="error">
+            Gagal memuat halaman berikutnya.
+          </Typography>
+          <Button
+            variant="outlined"
+            title="Coba Lagi"
+            onPress={onRetrySearchNextPage}
+            style={styles.retryButtonSmall}
+          />
+        </View>
+      );
+    }
+
+    if (!searchQuery.hasNextPage && searchNovelsList.length > 0 && searchEndMessage) {
+      return (
+        <View style={styles.footerEndContainer}>
+          <Typography variant="caption" color="secondary">
+            {searchEndMessage}
+          </Typography>
+        </View>
+      );
+    }
+
+    return null;
+  }, [
+    colors.accentPrimary,
+    searchEndMessage,
+    searchNovelsList.length,
+    searchQuery.hasNextPage,
+    searchQuery.isFetchNextPageError,
+    searchQuery.isFetchingNextPage,
+    onRetrySearchNextPage,
+  ]);
 
   return (
     <View
@@ -388,7 +617,7 @@ export const DiscoverScreen: React.FC<MainTabScreenProps<'Discover'>> = ({
         },
       ]}
     >
-      {/* Top App Bar Ringkas 56dp (Bebas dari mock search input) */}
+      {/* Top App Bar Terintegrasi Selalu Tersedia (Bebas Dipakai Walaupun Feed Beranda Gagal) */}
       <View
         style={[
           styles.topBar,
@@ -398,58 +627,181 @@ export const DiscoverScreen: React.FC<MainTabScreenProps<'Discover'>> = ({
           },
         ]}
       >
-        <Typography variant="headline" color="primary">
-          Discover
-        </Typography>
-
-        {/* Theme Switcher Aksesibel untuk Pengujian Pairing */}
-        <View style={styles.themeToggleGroup}>
-          <Button
-            variant={theme === 'light' ? 'filled' : 'outlined'}
-            title="L"
-            onPress={() => setTheme('light')}
-            accessibilityLabel="Pilih tema Light"
-            style={styles.themeButton}
+        {/* Bilah Input Pencarian */}
+        <View
+          style={[
+            styles.searchBarContainer,
+            {
+              backgroundColor: colors.surfaceBackground,
+              borderColor: colors.borderSubtle,
+            },
+          ]}
+        >
+          <Icon
+            name="search"
+            size={24}
+            color={colors.textSecondary}
+            accessibilityLabel="Pencarian"
           />
-          <Button
-            variant={theme === 'dark' ? 'filled' : 'outlined'}
-            title="D"
-            onPress={() => setTheme('dark')}
-            accessibilityLabel="Pilih tema Dark"
-            style={styles.themeButton}
+          <TextInput
+            ref={inputRef}
+            value={rawInput}
+            onChangeText={onInputChange}
+            placeholder="Cari judul novel..."
+            placeholderTextColor={colors.textSecondary}
+            returnKeyType="search"
+            autoCorrect={false}
+            autoCapitalize="none"
+            accessibilityLabel="Bilah pencarian novel"
+            style={[styles.searchInput, { color: colors.textPrimary }]}
           />
-          <Button
-            variant={theme === 'sepia' ? 'filled' : 'outlined'}
-            title="S"
-            onPress={() => setTheme('sepia')}
-            accessibilityLabel="Pilih tema Sepia"
-            style={styles.themeButton}
-          />
+          {rawInput.length > 0 && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Bersihkan pencarian"
+              onPress={onClearSearch}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              style={styles.clearButton}
+            >
+              <Icon name="close" size={24} color={colors.textSecondary} />
+            </Pressable>
+          )}
         </View>
+
+        {/* Tombol Tema Tunggal Menggilir Light/Dark/Sepia (Touch Target >= 48dp) */}
+        <Button
+          variant="outlined"
+          icon="palette"
+          onPress={cycleTheme}
+          accessibilityLabel={`Ganti tema, saat ini ${currentThemeLabel}, beralih ke ${nextThemeLabel}`}
+          style={styles.themeCycleButton}
+        />
       </View>
 
-      {/* Root Vertical FlatList Tunggal dengan Elemen Ter-render Stabil */}
-      <FlatList
-        data={latestNovels}
-        keyExtractor={(item) => item.id}
-        renderItem={({ item }) => (
-          <LatestFeedItem novel={item} onPress={onNovelPress} />
-        )}
-        ListHeaderComponent={listHeaderElement}
-        ListFooterComponent={listFooterElement}
-        ListEmptyComponent={listEmptyElement}
-        onEndReached={onEndReached}
-        onEndReachedThreshold={0.5}
-        refreshControl={
-          <RefreshControl
-            refreshing={isRefreshing}
-            onRefresh={onRefresh}
-            colors={[colors.accentPrimary]}
-            tintColor={colors.accentPrimary}
+      {/* Konten Berdasarkan Status UI */}
+      {!isSearchMode ? (
+        hasNoData && isTotalError && isNetworkFailure ? (
+          /* Kegagalan kedua feed Beranda tanpa data sesi (Dibatasi pada area konten saja, Top Bar tetap utuh) */
+          <View style={styles.offlineStateContainer}>
+            <Icon name="error" size={56} color={colors.textSecondary} accessibilityLabel="Tidak dapat menghubungi server" />
+            <Typography variant="title" color="primary" style={styles.offlineTitle}>
+              Tidak Dapat Menghubungi Server
+            </Typography>
+            <Typography variant="body" color="secondary" style={styles.offlineDesc}>
+              Gagal menyambung ke server backend. Periksa koneksi internet atau buka Pustaka Anda untuk membaca novel lokal.
+            </Typography>
+
+            <View style={styles.offlineActionRow}>
+              <Button
+                variant="filled"
+                title="Buka Pustaka"
+                onPress={() => navigation.navigate('Library')}
+                icon="library_books"
+              />
+              <Button
+                variant="outlined"
+                title="Coba Lagi"
+                onPress={onRefresh}
+                icon="refresh"
+              />
+            </View>
+          </View>
+        ) : (
+          /* Mode Beranda Normal (Novel Populer + Pembaruan Terbaru) */
+          <FlatList
+            data={latestNovels}
+            keyExtractor={(item) => item.id}
+            renderItem={({ item }) => (
+              <LatestFeedItem novel={item} onPress={onNovelPress} />
+            )}
+            ListHeaderComponent={listHeaderElement}
+            ListFooterComponent={listFooterElement}
+            ListEmptyComponent={listEmptyElement}
+            onEndReached={onEndReached}
+            onEndReachedThreshold={0.5}
+            refreshControl={
+              <RefreshControl
+                refreshing={isRefreshing}
+                onRefresh={onRefresh}
+                colors={[colors.accentPrimary]}
+                tintColor={colors.accentPrimary}
+              />
+            }
+            contentContainerStyle={styles.listContent}
           />
-        }
-        contentContainerStyle={styles.listContent}
-      />
+        )
+      ) : searchUiState.type === 'DEBOUNCING' ? (
+        /* Status Menunggu Debounce: Tampilkan pesan tenang, sembunyikan hasil lama */
+        <View style={styles.stateCenterContainer}>
+          <ActivityIndicator size="small" color={colors.accentPrimary} />
+          <Typography variant="body" color="secondary" style={styles.statusText}>
+            Menyiapkan pencarian untuk "{searchUiState.query}"...
+          </Typography>
+        </View>
+      ) : searchUiState.type === 'LOADING' ? (
+        /* Loading Awal Pencarian */
+        <View style={styles.searchSkeletonContainer}>
+          <LatestFeedSkeleton />
+        </View>
+      ) : searchUiState.type === 'ERROR' ? (
+        /* Error Pencarian (Kecuali jika dibatalkan secara bersih) */
+        searchUiState.isCancelled ? null : (
+          <View style={styles.stateCenterContainer}>
+            <Surface variant="card" style={styles.inlineErrorCard}>
+              <Icon name="error" size={24} color={colors.statusError} accessibilityLabel="Galat pencarian" />
+              <Typography variant="body" color="secondary" style={styles.errorText}>
+                {searchUiState.message}
+              </Typography>
+              <Button
+                variant="filled"
+                title="Coba Lagi"
+                onPress={() => searchQuery.refetch()}
+                style={styles.retryButton}
+              />
+            </Surface>
+          </View>
+        )
+      ) : searchUiState.type === 'EMPTY' ? (
+        /* Hasil Kosong HANYA setelah respons sukses halaman pertama [] */
+        <View style={styles.emptyContainer}>
+          <Icon name="menu_book" size={48} color={colors.textSecondary} accessibilityLabel="Tidak ada hasil" />
+          <Typography variant="title" color="primary" style={styles.emptyTitle}>
+            Tidak menemukan novel untuk "{searchUiState.query}"
+          </Typography>
+          <Typography variant="body" color="secondary" style={styles.emptyText}>
+            Coba gunakan kata kunci lain atau periksa ejaan judul novel.
+          </Typography>
+          <Button
+            variant="outlined"
+            title="Kembali ke Beranda"
+            onPress={onReturnHome}
+            style={styles.returnHomeButton}
+          />
+        </View>
+      ) : (
+        /* Hasil Ditemukan: FlatList vertikal hasil pencarian */
+        <FlatList
+          data={searchNovelsList}
+          keyExtractor={(item) => item.id}
+          renderItem={({ item }) => (
+            <LatestFeedItem novel={item} onPress={onNovelPress} />
+          )}
+          ListHeaderComponent={searchListHeaderElement}
+          ListFooterComponent={searchListFooterElement}
+          onEndReached={onSearchEndReached}
+          onEndReachedThreshold={0.5}
+          keyboardShouldPersistTaps="handled"
+          refreshControl={
+            <RefreshControl
+              refreshing={isRefreshing}
+              onRefresh={onSearchRefresh}
+              colors={[colors.accentPrimary]}
+              tintColor={colors.accentPrimary}
+            />
+          }
+          contentContainerStyle={styles.listContent}
+        />
+      )}
     </View>
   );
 };
@@ -459,21 +811,64 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   topBar: {
-    height: 56,
+    minHeight: 56,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: SPACING.space4,
+    paddingHorizontal: SPACING.space3,
+    paddingVertical: SPACING.space1,
     borderBottomWidth: 1,
+    gap: SPACING.space2,
   },
-  themeToggleGroup: {
+  searchBarContainer: {
+    flex: 1,
+    minHeight: 48,
     flexDirection: 'row',
-    gap: SPACING.space1,
+    alignItems: 'center',
+    borderRadius: RADIUS.medium,
+    borderWidth: 1,
+    paddingHorizontal: SPACING.space2,
   },
-  themeButton: {
-    minWidth: 36,
-    minHeight: 36,
-    paddingHorizontal: 8,
+  searchInput: {
+    flex: 1,
+    minHeight: 48,
+    paddingHorizontal: SPACING.space2,
+    paddingVertical: SPACING.space1,
+    fontSize: 15,
+  },
+  clearButton: {
+    minWidth: 48,
+    minHeight: 48,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  themeCycleButton: {
+    minWidth: 48,
+    minHeight: 48,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+  },
+  searchHeaderContainer: {
+    paddingBottom: SPACING.space1,
+  },
+  searchCountContainer: {
+    paddingHorizontal: SPACING.space4,
+    paddingVertical: SPACING.space2,
+  },
+  stateCenterContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: SPACING.space4,
+    gap: SPACING.space2,
+  },
+  statusText: {
+    textAlign: 'center',
+    marginTop: SPACING.space2,
+  },
+  searchSkeletonContainer: {
+    paddingTop: SPACING.space3,
   },
   headerContainer: {
     paddingBottom: SPACING.space2,
@@ -524,15 +919,24 @@ const styles = StyleSheet.create({
     minHeight: 36,
   },
   emptyContainer: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: SPACING.space8,
+    paddingHorizontal: SPACING.space6,
     gap: SPACING.space2,
+  },
+  emptyTitle: {
+    textAlign: 'center',
+    marginTop: SPACING.space2,
   },
   emptyText: {
     textAlign: 'center',
     paddingHorizontal: SPACING.space4,
-    paddingVertical: SPACING.space2,
+    paddingVertical: SPACING.space1,
+  },
+  returnHomeButton: {
+    marginTop: SPACING.space3,
   },
   footerLoader: {
     flexDirection: 'row',

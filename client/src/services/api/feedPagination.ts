@@ -99,3 +99,16 @@ export function getFeedEndMessage(reason: FeedEndReason): string | null {
   }
   return null;
 }
+
+/**
+ * Menghasilkan pesan teks akhir hasil pencarian yang sesuai dengan alasan penghentian.
+ */
+export function getSearchEndMessage(reason: FeedEndReason): string | null {
+  if (reason === 'EXHAUSTED') {
+    return 'Semua hasil pencarian telah dimuat.';
+  }
+  if (reason === 'NO_NEW_ITEMS') {
+    return 'Tidak ada hasil novel baru.';
+  }
+  return null;
+}

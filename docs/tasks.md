@@ -718,24 +718,101 @@ Berdasarkan inspeksi sistem berkas pada repositori `d:\project\yomou`:
 
 #### [DIS-03] Implementasi Fitur Pencarian Novel
 * **Area**: Frontend
-* **Status**: `TODO`
-* **Tujuan**: Membangun fungsionalitas pencarian novel secara interaktif dengan bilah input, *debouncing*, dan penanganan hasil pencarian.
+* **Status**: `IN_PROGRESS` (*Implementasi kode, validasi parameter halaman ketat, bilah pencarian top bar terintegrasi, tombol tema tunggal menggilir, debounce manager produksi, 6 status tampilan, isolasi cache, siklus paginasi, dan ekspor bundel Hermes Android telah selesai diverifikasi secara otomatis; pengujian keyboard virtual dan tombol fisik Back di runtime Android masih tertunda*)
+* **Tujuan**: Membangun fungsionalitas pencarian novel secara interaktif pada Top App Bar layar `DiscoverScreen` dengan *debouncing* 400ms, preservasi cache Beranda, dan penanganan seluruh status tampilan.
 * **Ruang Lingkup**:
-  * Input pencarian dengan *debounce* 400 ms sebelum memicu request API.
-  * Integrasi endpoint `/api/novels/search?q={query}`.
-  * Tampilan hasil pencarian dalam bentuk daftar kartu novel datar.
-  * Tampilan status kosong jika pencarian tidak menemukan hasil (ikon outline buku + teks penjelas).
-* **Dependensi**: `DIS-02`.
+  * Tata letak Top App Bar 56dp terintegrasi tanpa menambah layar atau rute navigasi terpisah:
+    * Bilah input datar memuat ikon pencarian 24dp (`search`), `TextInput` dengan dukungan font scaling penuh, serta tombol bersihkan 24dp (`close`) bertarget sentuh minimal $48\times 48\text{dp}$ yang mempertahankan fokus input saat ditekan.
+    * Tombol pengalih tema tunggal yang menggilir *Light* $\rightarrow$ *Dark* $\rightarrow$ *Sepia* $\rightarrow$ *Light* dengan label aksesibilitas dinamis, ikon 24dp, dan target sentuh minimal $48\times 48\text{dp}$ sehingga hemat ruang pada ponsel kecil (320dp) tanpa mengecilkan target sentuh atau mematikan font scaling.
+  * Validasi parameter halaman bersama (`validatePageParam`): menolak bilangan non-integer desimal aman, $\le 0$, `NaN`, `Infinity`, atau non-number dengan `AppError('BAD_REQUEST', 400)` sebelum request; meniadakan mutasi diam-diam `Math.max(1, Math.floor(page))` pada `getLatestNovels` dan `searchNovels`.
+  * Layanan API `searchNovels(query, page, options)` memanggil `GET /api/novels/search?q={query}&page={page}` dengan `encodeURIComponent` karakter khusus (`&`, `+`, spasi, Unicode), preservasi kapitalisasi asli, dan pembatalan bersih via `AbortSignal`.
+  * Pengelola debounce produksi (`SearchDebounceManager`):
+    * Input bertahap cepat hanya menjalankan kata kunci terakhir setelah jeda 400ms.
+    * Input kosong atau spasi (`rawInput.trim() === ''`) langsung mereset seketika tanpa jeda timer.
+    * Pembersihan input membatalkan timer yang tertunda dan mencegah hasil request lama mengembalikan layar ke mode pencarian.
+  * Penggunaan TanStack Query `useInfiniteQuery` dengan aturan:
+    * `enabled: isSearchMode && !isPendingDebounce && debouncedQuery.length > 0`.
+    * Query key `['novels', 'search', debouncedQuery]` dan parameter request menggunakan kata kunci trim yang identik.
+    * Isolasi cache penuh: pencarian tidak memutasi atau menghapus cache Beranda (`['novels', 'popular']` dan `['novels', 'latest']`).
+  * Penanganan deterministik 6 status tampilan (`resolveSearchUiState`):
+    1. *Idle / Mode Beranda*: Tampilan Populer & Pembaruan Terbaru Discover.
+    2. *Menunggu Debounce*: Menampilkan status tenang *"Menyiapkan pencarian untuk \"{rawInput.trim()}\"..."*, menyembunyikan hasil/error lama.
+    3. *Loading Awal*: Skeletons vertikal saat memuat halaman pertama.
+    4. *Hasil Ditemukan*: FlatList vertikal hasil pencarian dengan header label *"{count} novel dimuat"*, `keyboardShouldPersistTaps="handled"`, dan footer paginasi.
+    5. *Hasil Kosong*: HANYA muncul setelah respons sukses halaman pertama `[]` (request dibatalkan atau belum berjalan dilarang dianggap hasil kosong), dilengkapi tombol "Kembali ke Beranda" yang menutup keyboard.
+    6. *Error*: Kartu error dengan tombol "Coba Lagi" (`REQUEST_CANCELLED` tidak pernah ditampilkan sebagai pesan galat).
+  * Penghentian paginasi dan pencegahan tabrakan:
+    * Halaman kosong `[]` menghentikan paginasi (`EXHAUSTED` $\rightarrow$ *"Semua hasil pencarian telah dimuat."*).
+    * Halaman tanpa ID baru menghentikan auto-fetch (`NO_NEW_ITEMS` $\rightarrow$ *"Tidak ada hasil novel baru."*).
+    * Halaman paginasi berikutnya yang gagal (`isFetchNextPageError`) hanya ditampilkan pada footer daftar dengan tombol "Coba Lagi" yang memanggil `fetchNextPage()`; hasil sebelumnya tetap utuh ditampilkan dan auto-fetch dihentikan sementara hingga retry ditekan.
+    * Banner galat penyegaran (refresh) dibedakan secara tegas dari error paginasi menggunakan `searchQuery.isRefetchError`; banner hanya muncul jika refetch gagal setelah data tersedia, dan tombol "Coba Lagi" menggunakan handler `onSearchRefresh` dengan guard request berjalan (`isRefreshing || isFetching || isFetchingNextPage`) alih-alih memanggil `searchQuery.refetch()` langsung.
+    * Penanganan galat pemuatan awal (`items.length === 0`) tetap mempertahankan `searchQuery.isError`.
+    * Pembatalan request (`REQUEST_CANCELLED`) diabaikan secara ketat dari banner galat maupun status kosong.
+    * Concurrency guard pada retry, `onEndReached`, dan refresh mencegah request bertabrakan.
+  * Perilaku Keyboard & Tombol Hardware Back Android:
+    * Tombol Back menutup keyboard terlebih dahulu jika terbuka.
+    * Saat keyboard sudah tertutup dan Search aktif, Back membersihkan pencarian kembali ke Beranda.
+    * Setelah di Beranda, tombol Back menggunakan perilaku navigasi standar.
+    * Handler hanya aktif saat layar Discover sedang fokus (`useFocusEffect`) dan dibersihkan saat blur/unmount.
+    * Kartu hasil pencarian dapat ditekan saat keyboard terbuka tanpa memerlukan tap ganda (`keyboardShouldPersistTaps="handled"`).
+* **Dependensi**: `DIS-02` (*Status FON-03, FON-04, FON-05, DIS-01, dan DIS-02 tetap dipertahankan IN_PROGRESS menunggu runtime Android*).
 * **File/Area Terkait**:
-  * `client/src/components/search/SearchBar.tsx` [Usulan]
-  * `client/src/pages/SearchScreen.tsx` [Usulan]
+  * `client/src/services/api/novelApi.ts` [Selesai - `validatePageParam`, `getLatestNovels`, `searchNovels`]
+  * `client/src/services/api/feedPagination.ts` [Selesai - `getSearchEndMessage`]
+  * `client/src/services/api/index.ts` [Selesai - re-exports]
+  * `client/src/screens/discover/searchState.ts` [Selesai - `resolveSearchUiState` dengan `isRefetchError`, `SearchDebounceManager`]
+  * `client/src/screens/discover/DiscoverScreen.tsx` [Selesai - top bar, tombol tema siklik, search input, 6 state, BackHandler, guarded onSearchRefresh, footer next-page retry]
+  * `scripts/verify-search-flow.mjs` [Selesai]
+  * `package.json` [Selesai - script `test:search`]
 * **Acceptance Criteria**:
-  * [ ] Mengetikkan kata kunci mencari novel dan menampilkan hasil yang relevan.
-  * [ ] Menghapus input secara instan mereset hasil pencarian ke tampilan awal.
-  * [ ] Tidak ada pencampuran emoji pada bilah pencarian (menggunakan ikon vektor search standar).
+  * [x] Validasi parameter halaman bersama (`validatePageParam`) menolak non-integer desimal aman, $\le 0$, NaN, Infinity, dan non-number dengan BAD_REQUEST (400) pada `getLatestNovels` dan `searchNovels` tanpa mutasi diam-diam.
+  * [x] Karakter khusus (`&`, `+`, spasi, Unicode) ter-encode aman via `encodeURIComponent` dan kapitalisasi huruf asli tetap dipertahankan.
+  * [x] Input bertahap yang cepat hanya menjadwalkan timer dan mengeksekusi kata kunci terakhir setelah jeda debounce (`SearchDebounceManager`).
+  * [x] Input kosong atau spasi langsung mereset seketika secara sinkron tanpa menunggu jeda timer.
+  * [x] Tombol bersihkan ("X") membatalkan timer aktif, mereset state seketika, dan mempertahankan fokus input untuk mengetik ulang.
+  * [x] Respons query lambat yang tiba terlambat ("alpha") terbukti tidak menggantikan atau merusak query aktif terkini ("beta").
+  * [x] `REQUEST_CANCELLED` tidak pernah ditampilkan sebagai banner error dan tidak pernah memicu status hasil kosong.
+  * [x] Status hasil kosong (`EMPTY`) HANYA terpicu setelah respons sukses HTTP 200 dengan `[]` pada halaman pertama.
+  * [x] Status hasil ditemukan (`SUCCESS`) menampilkan label *"{count} novel dimuat"* (bukan total upstream yang tidak diketahui).
+  * [x] Cache pencarian terisolasi sepenuhnya dari cache Beranda (`['novels', 'popular']`, `['novels', 'latest']`).
+  * [x] Banner error penyegaran (refetch) dibedakan secara tegas dari error paginasi menggunakan `isRefetchError`; error halaman berikutnya hanya muncul pada footer dengan tombol "Coba Lagi" `fetchNextPage()` dan mempertahankan hasil sebelumnya.
+  * [x] Tombol coba lagi pada banner refresh menggunakan handler dengan guard request berjalan (mencegah request bertabrakan).
+  * [x] Siklus paginasi pencarian terverifikasi: Halaman 1 sukses $\rightarrow$ Halaman 2 gagal (Halaman 1 tetap utuh di cache, tanpa banner refresh, retry tetap menuju Halaman 2) $\rightarrow$ Retry Halaman 2 sukses menggabungkan data $\rightarrow$ Halaman 3 kosong terminasi dengan pesan netral *EXHAUSTED*.
+  * [x] Kode bundel client berhasil dikompilasi ke bytecode Hermes Android (`npx expo export --platform android`).
 * **Cara Verifikasi**:
-  * Ketikkan kata kunci "kimi" dan verifikasi hasil pencarian muncul dalam waktu < 800 ms (kondisi cache hit).
-* **Referensi Acuan**: [PRD.md: Seksi 3.1 & 8.3](file:///d:/project/yomou/docs/PRD.md).
+  * Jalankan `npm run test:search` (`node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./scripts/register-ts-loader.mjs --experimental-strip-types scripts/verify-search-flow.mjs`) untuk memvalidasi:
+    - Regresi validasi parameter halaman bersama pada `getLatestNovels` dan `searchNovels` menolak input tidak valid sebelum network request.
+    - URL encoding karakter khusus (`&`, `+`, spasi, Unicode) dan preservasi huruf besar/kecil.
+    - Pengujian debounce cepat, reset instan pada spasi/kosong, dan pembersihan timer aktif via `SearchDebounceManager`.
+    - Race condition respon lambat (alpha vs beta) tidak menimpa data query aktif.
+    - Penanganan pembatalan: `REQUEST_CANCELLED` tidak dijadikan error banner atau empty state.
+    - Penegakan syarat empty state hanya pada respons sukses `[]` halaman 1.
+    - Isolasi cache TanStack Query antara pencarian dan feed Beranda.
+    - Pengujian siklus `InfiniteQueryObserver` pencarian:
+      1. P1 sukses $\rightarrow$ P2 gagal: hasil P1 utuh (2 item), tanpa banner refresh (`isRefetchError === false`, `refetchError === null`), retry tetap menuju P2 (`hasNextPage === true`).
+      2. Refetch gagal setelah data tersedia: hasil sebelumnya tetap di cache, banner refresh muncul (`isRefetchError === true`, `refetchError !== null`).
+      3. Terminasi paginasi: respons kosong `[]` menghasilkan status netral *EXHAUSTED* dan duplikat terdeteksi menghasilkan *NO_NEW_ITEMS*.
+    - Assertion cancellation pada helper `resolveSearchUiState`: galat `REQUEST_CANCELLED` menghasilkan `refetchError: null` sehingga tidak memunculkan banner refresh (diverifikasi pada helper, bukan pembatalan refetch aktif pada observer).
+    - Isolasi error query: kegagalan kata kunci lama tidak bocor ke pengetikan kata kunci baru atau saat kembali ke Beranda.
+  * Jalankan `npm run test:discover`: Lolos 100%.
+  * Jalankan `npm run typecheck:client` (`tsc --noEmit`): Lolos 0 galat.
+  * Jalankan `npm run check:contracts`: Lolos kesetaraan kontrak 100%.
+  * Jalankan `npm run test:nav`: Lolos verifikasi navigasi.
+  * Jalankan `npm run test:theme`: Lolos kontras AAA/AA dan aset ikon offline.
+  * Jalankan `npm run test:sqlite`: Lolos skema dan integritas relasional SQLite.
+  * Jalankan `npx expo export --platform android` di `client`: Bundel bytecode Hermes (`.hbc`) berhasil dikompilasi (1341 modul).
+  * *Batas Verifikasi Runtime Android (Tertunda)*:
+    - Pengujian Node.js di atas hanya membuktikan logika fungsi JavaScript, validasi parameter/skema, isolasi cache, dan observer query. Pengujian ini BUKAN bukti render antarmuka UI aktual di layar, interaksi visual, atau eksekusi runtime engine Hermes di perangkat fisik/emulator.
+    - Kompilasi bundel via `npx expo export --platform android` hanya memvalidasi keberhasilan kompilasi bytecode Hermes statis, bukan eksekusi runtime di sistem operasi Android.
+    - Seluruh pengujian interaksi Android berikut berstatus PENDING hingga pengujian di perangkat fisik/emulator:
+      1. Penyesuaian layout dan kemunculan soft keyboard virtual Android di layar nyata (`keyboardShouldPersistTaps="handled"`).
+      2. Respons sentuhan pertama pada kartu hasil pencarian saat keyboard terbuka.
+      3. Presedensi tombol fisik Back hardware Android (menutup keyboard $\rightarrow$ membersihkan pencarian $\rightarrow$ navigasi default).
+      4. Jarak fisik target sentuh ikon 24dp dan tombol 48dp pada layar kecil fisik (320dp).
+      5. Pengumuman TalkBack Android untuk bilah input dan tombol tema siklik.
+      6. Kepatuhan tampilan terhadap pembesaran font sistem (font scaling 1.5x–2.0x) tanpa clipping visual.
+    - Sesuai prinsip verifikasi integritas, status `DIS-03` dicatat **`IN_PROGRESS`** bersama `FON-03`, `FON-04`, `FON-05`, `DIS-01`, dan `DIS-02` hingga pengujian di perangkat/emulator Android dapat dilaksanakan.
+* **Referensi Acuan**: [PRD.md: Seksi 3.1 & 8.3](file:///d:/project/yomou/docs/PRD.md), [DiscoverSpec.md: Seksi 2 & 4.3](file:///d:/project/yomou/client/src/screens/discover/DiscoverSpec.md).
 
 ---
 
