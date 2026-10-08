@@ -2,7 +2,7 @@ import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { BottomTabNavigator } from './BottomTabNavigator';
 import {
-  NovelDetailPlaceholderScreen,
+  NovelDetailScreen,
   ReaderPlaceholderScreen,
   DownloadManagerPlaceholderScreen,
 } from '../screens';
@@ -20,7 +20,7 @@ export const RootNavigator: React.FC = () => {
       }}
     >
       <Stack.Screen name="MainTabs" component={BottomTabNavigator} />
-      <Stack.Screen name="NovelDetail" component={NovelDetailPlaceholderScreen} />
+      <Stack.Screen name="NovelDetail" component={NovelDetailScreen} />
       <Stack.Screen name="Reader" component={ReaderPlaceholderScreen} />
       <Stack.Screen name="DownloadManager" component={DownloadManagerPlaceholderScreen} />
     </Stack.Navigator>

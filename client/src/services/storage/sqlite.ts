@@ -5,7 +5,7 @@
  */
 
 import * as SQLite from 'expo-sqlite';
-import { ALL_MIGRATIONS, SCHEMA_SQL } from './schema';
+import { ALL_MIGRATIONS, SCHEMA_SQL, ensureSyncedChapterIdsMigrationAsync } from './schema';
 
 export const DATABASE_NAME = 'yomou.db';
 
@@ -27,6 +27,9 @@ async function performDatabaseInit(dbName: string): Promise<SQLite.SQLiteDatabas
     for (const sql of ALL_MIGRATIONS) {
       await openedDb.execAsync(sql);
     }
+
+    // Ensure synced_chapter_ids column is migrated on pre-existing databases before ready
+    await ensureSyncedChapterIdsMigrationAsync(openedDb);
 
     dbInstance = openedDb;
     return openedDb;

@@ -140,4 +140,4 @@ Seluruh keputusan teknis, arsitektur, dan pedoman desain diatur dalam folder `do
 
 ## 📄 Lisensi
 
-Proyek ini dikembangkan di bawah lisensi MIT. Lihat file [LICENSE](client/LICENSE) untuk informasi lebih lanjut.
+Proyek ini dikembangkan di bawah lisensi MIT. Lihat file [LICENSE](LICENSE) untuk informasi lebih lanjut.

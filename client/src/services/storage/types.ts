@@ -15,6 +15,7 @@ export interface LocalNovelRecord {
   status: string | null; // 'Ongoing' | 'Completed'
   total_chapters: number;
   is_bookmarked: 0 | 1;
+  synced_chapter_ids: string | null; // JSON serialized string[] or null (if never synced)
   created_at: number; // Unix epoch ms
   updated_at: number; // Unix epoch ms
 }

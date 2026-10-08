@@ -2,6 +2,7 @@ export * from './schema';
 export * from './types';
 export * from './sqlite';
 export * from './filesystem';
+export * from './novelDetailStorage';
 
 import { initFileSystemDirs } from './filesystem';
 import { initDatabase } from './sqlite';

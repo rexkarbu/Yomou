@@ -816,28 +816,127 @@ Berdasarkan inspeksi sistem berkas pada repositori `d:\project\yomou`:
 
 ---
 
-#### [DIS-04] Implementasi Layar Detail Novel & Drawer Daftar Bab
+#### [DIS-04] Implementasi Layar Detail Novel & Daftar Bab
 * **Area**: Frontend
-* **Status**: `TODO`
-* **Tujuan**: Mengembangkan layar Detail Novel untuk melihat metadata lengkap, sinopsis, status bookmark, dan seluruh daftar bab.
+* **Status**: `IN_PROGRESS` (*Implementasi kode, validasi respons & identitas ketat, isolasi transaksi SQLite atomik, persistensi urutan bab via synced_chapter_ids, bookmark atomik sebelum sinkronisasi, migrasi database lama terhubung, dan ekspor bundel Hermes Android telah selesai diverifikasi secara otomatis; pengujian gestur sentuh fisik dan TalkBack di runtime Android masih tertunda*)
+* **Tujuan**: Mengembangkan layar Detail Novel untuk melihat metadata lengkap, sinopsis rata kiri yang dapat diperluas, status bookmark lokal reaktif, tombol aksi navigasi membaca, dan seluruh daftar bab dalam arsitektur FlatList tunggal bebas drawer/bento-box.
 * **Ruang Lingkup**:
-  * Integrasi API `/api/novels/:novelId`.
-  * Render header: Cover novel (kiri), judul, penulis, status ("Ongoing"/"Completed"), chip genre monokromatik.
-  * Render sinopsis teks yang dapat diperluas (*expandable synopsis*) dengan perataan rata kiri.
-  * Render tombol tindakan utama: "Mulai Baca", "Bookmark", "Unduh".
-  * Render daftar bab dalam bentuk flat list berpemisah 1dp tipis, lengkap dengan tombol toggle urutan (Ascending / Descending).
-* **Dependensi**: `DIS-02`, `FON-03`.
+  * Integrasi API `GET /api/novels/:novelId` dengan validasi skema ketat (`validateNovelDetail`):
+    * Memvalidasi kesesuaian persis `novel.id` dengan requested novelId.
+    * Memvalidasi bahwa setiap `chapter.novelId` identik dengan ID induk tanpa fallback diam-diam.
+    * Menolak duplikasi `chapter.id` pada payload API.
+    * Menolak karakter berbahaya/traversal pada `novelId`, dan mempertahankan subpath kanonik (`mtl/chapter-1`) pada `chapter.id`.
+    * Memvalidasi `chapterNumber` berupa angka terhingga (menerima float/pecahan dan 0).
+  * Arsitektur UI FlatList vertikal tunggal tanpa drawer atau dialog terpisah:
+    * Seluruh elemen header (`NovelDetailHeader`, sinopsis, aksi tombol, sorting toggle) ditempatkan di dalam `ListHeaderComponent` untuk mencegah `VirtualizedLists should never be nested` warning.
+    * Header dua-sisi responsif dengan rasio cover 2:3 ($93 \times 140\text{dp}$), judul, penulis, status, dan chip genre monokromatik.
+    * Evaluasi reflow responsif: menggunakan breakpoint `width < 360 || fontScale >= 1.5` dari `useWindowDimensions()` untuk beralih ke tata letak vertikal bertumpuk demi mencegah teks terpotong pada layar sempit atau font diperbesar.
+    * Sinopsis teks rata kiri murni (`text-left`) yang dapat diperluas/ciutkan (*expandable synopsis*), mematuhi anti-pattern V-12 (larangan perataan justify).
+    * Tiga tombol aksi mandiri bertarget sentuh minimal $48 \times 48\text{dp}$:
+      1. *"Mulai Baca"* / *"Lanjut Baca"*: Membaca bab pertama atau bab terakhir yang tercatat di `chapter_reading_progress` (fallback ke bab pertama jika progres bab lama terhapus dari katalog upstream).
+      2. *"Bookmark"*: Toggle status simpan lokal dengan ikon visual (`bookmark` vs `bookmark_border`) dan label dinamis.
+      3. *"Unduh"*: Tombol informatif yang menampilkan dialog/alert bahwa fitur unduhan offline belum tersedia (dialokasikan untuk Milestone 5) alih-alih klaim palsu.
+    * Daftar bab: Baris flat berpemisah 1dp tipis, menampilkan nomor bab, judul bab, dan tanggal rilis (jika ada); item yang ditekan menavigasi ke rute `Reader` dengan parameter `(novelId, chapterId)`.
+    * Tombol pengurut urutan (Ascending / Descending): Membalik array bab secara visual murni (`[...chapters].reverse()`) tanpa memutasi array sumber atau memicu sinkronisasi ulang.
+  * Persistensi SQLite dan Isolasi Transaksi Atomik:
+    * Menambahkan kolom `synced_chapter_ids TEXT DEFAULT NULL` pada tabel `novels` untuk menyimpan urutan kanonik bab dari upstream secara deterministik.
+    * Nilai `synced_chapter_ids` membedakan secara tegas:
+      - `NULL`: Belum pernah disinkronisasi (Tingkat 1 dari feed).
+      - `'[]'`: Telah disinkronisasi dan katalog upstream memang kosong.
+      - `'["id1", "id2", ...]'`: Array ID bab tersinkronisasi dalam urutan kronologis sejati.
+    * Bab direkonstruksi dalam JS via Map lookup secara deterministik mengikuti indeks `synced_chapter_ids`, mempertahankan prolog non-numerik dan nomor bab berulang pada multi-volume light novel.
+    * Snapshot korup (bukan JSON array string yang valid) atau ID snapshot tanpa baris bab di database melempar `StorageError` secara eksplisit (dilarang dianggap kosong atau lengkap secara diam-diam).
+    * Sinkronisasi katalog (`syncNovelMetadata`) berjalan di dalam `withExclusiveTransactionAsync` dengan seluruh query dieksekusi melalui objek `txn`.
+    * Proteksi data offline: Pembaruan metadata dan bab menggunakan `INSERT ... ON CONFLICT DO UPDATE` tanpa menimpa kolom `content_blocks`, `download_status`, atau `downloaded_at`, dan bab lama yang tidak ada di daftar upstream tidak pernah dihapus (`DELETE`) agar progres baca dan unduhan offline tetap aman. Nilai `is_bookmarked` lokal yang ada tidak pernah direset ke 0.
+    * Operasi bookmark sebelum sinkronisasi pertama selesai (`toggleNovelBookmark`): Melakukan upsert metadata minimal secara atomik (`ON CONFLICT(id) DO UPDATE SET is_bookmarked, updated_at`), tidak menyalin ulang seluruh bab, memverifikasi nilai tersimpan di database sebelum menyatakan sukses, dan melempar error agar UI melakukan rollback jika gagal.
+    * Mutex lokal in-flight per `novelId` (`runExclusiveNovelOperation`) memastikan sinkronisasi API dan perubahan bookmark pada novel yang sama dieksekusi secara serial tanpa tabrakan.
+    * Migrasi database lama: Fungsi `ensureSyncedChapterIdsMigrationAsync` produksi dijalankan langsung pada inisialisasi database di `sqlite.ts` melalui adapter `node:sqlite` tanpa duplikasi fungsi migrasi sinkron khusus tes.
+    * Kesiapan dan konsistensi bookmark di layar:
+      - Tombol bookmark dinonaktifkan hingga pembacaan status lokal selesai (`storageStatus === 'READY'`).
+      - State `READY` ditetapkan setelah snapshot berhasil dibaca, termasuk saat hasil snapshot masih `null`.
+      - Penanda sesi yang tidak dapat digunakan ulang (`sessionId`) dan pembatalan sesi via cleanup effect mencegah balapan antar-sesi, termasuk skenario A -> B -> A.
+      - Penanda operasi per-kategori (`opId`) diterapkan pada pembacaan lokal, hasil sync, bookmark, dan refresh, termasuk seluruh jalur error/finally.
+      - Guard sinkron `isSavingBookmarkRef` yang sudah tersedia digunakan sebelum memulai mutasi (bukan hanya state hasil render), dan operasi sesi lama tidak dapat membuka lock operasi sesi baru di blok finally.
+      - Snapshot dan mutasi novel A tidak dapat digunakan untuk tampilan/aksi novel B saat berpindah rute secara cepat.
+      - Reload background dan sinkronisasi lama tidak menimpa status optimistik bookmark pengguna dengan status lama server (versioning mutasi).
+    * Validasi ID Kanonik konsisten dengan backend:
+      - `novelId` wajib berupa satu segmen `^[a-z0-9_-]+$`.
+      - `chapterId` wajib berupa satu atau lebih segmen yang dipisahkan garis miring `/`.
+      - Input non-kanonik ditolak langsung tanpa pemangkasan (trim) atau mutasi diam-diam.
+      - Pengecekan kesesuaian `novel.id` mentah dengan `requestedNovelId` dilakukan sebelum normalisasi.
+    * Penanganan refresh dan pembatalan request:
+      - Galat pembatalan `REQUEST_CANCELLED` tidak memunculkan banner kegagalan refresh.
+      - Data novel yang telah termuat di layar dipertahankan saat refresh mengalami kegagalan.
+      - Tombol coba lagi pada banner refresh dan retry awal menggunakan guard sinkron `isRefreshingRef` untuk mencegah request ganda.
+    * Kegagalan simpan lokal tidak menghalangi tampilan data API di layar.
+* **Dependensi**: `DIS-02`, `FON-03` (*Status FON-03, FON-04, FON-05, DIS-01, DIS-02, dan DIS-03 tetap dipertahankan IN_PROGRESS menunggu runtime Android*).
 * **File/Area Terkait**:
-  * `client/src/pages/NovelDetailScreen.tsx` [Usulan]
-  * `client/src/components/novel/ChapterListDrawer.tsx` [Usulan]
-  * `client/src/components/novel/NovelMetadataHeader.tsx` [Usulan]
+  * `client/src/services/storage/schema.ts` [Selesai - migrasi `synced_chapter_ids` async produksi via adapter node:sqlite; duplikasi sync dihapus]
+  * `client/src/services/storage/sqlite.ts` [Selesai - pemanggil migrasi async saat startup init]
+  * `client/src/services/storage/types.ts` [Selesai - tipe `synced_chapter_ids`]
+  * `client/src/services/storage/novelDetailStorage.ts` [Selesai - mutex, snapshot loader, sync, bookmark atomic upsert, StorageError]
+  * `client/src/services/storage/index.ts` [Selesai - re-exports]
+  * `client/src/services/api/novelApi.ts` [Selesai - `validateNovelId`, `validateChapterId`, `validateChapterSummary`, `validateNovelDetail`, `getNovelDetail` dengan penolakan non-kanonik tanpa trim & raw ID check sebelum normalisasi]
+  * `client/src/screens/detail/chapterSelection.ts` [Selesai - helper produksi `resolveReadingTarget`]
+  * `client/src/screens/detail/bookmarkState.ts` [Selesai - helper produksi transisi state bookmark optimistik dan rollback UI dua arah]
+  * `client/src/screens/detail/detailLifecycle.ts` [Selesai - tracker sesi non-reusable, tokens, concurrency guards sinkron `isSavingBookmarkRef` & `isRefreshingRef`, dan lock isolation]
+  * `client/src/screens/detail/NovelDetailSkeleton.tsx` [Selesai - cover 93×140dp skeleton & header placeholder]
+  * `client/src/screens/detail/NovelDetailScreen.tsx` [Selesai - FlatList tunggal, reflow breakpoint, sinopsis rata kiri, 3 aksi, visual sort, status banner, chapter item 1dp, gate status READY, penanda sesi non-reusable & cleanup effect A -> B -> A, guard sinkron isSavingBookmarkRef & isRefreshingRef, lock isolation, supresi REQUEST_CANCELLED, guarded retry]
+  * `client/src/screens/detail/index.ts` [Selesai - export screen dan helper produksi]
+  * `client/src/screens/index.ts` [Selesai - re-export detail]
+  * `client/src/navigation/RootNavigator.tsx` [Selesai - registrasi NovelDetailScreen]
+  * `scripts/verify-novel-detail.mjs` [Selesai - 13 pengujian menyeluruh dengan pengujian langsung kelas produksi DetailLifecycleTracker]
+  * `package.json` [Selesai - script `test:detail`]
 * **Acceptance Criteria**:
-  * [ ] Tombol toggle urutan membalik daftar bab dari Bab 1 $\rightarrow$ Terakhir menjadi Terakhir $\rightarrow$ Bab 1 seketika.
-  * [ ] Menekan salah satu bab membuka `ReaderScreen` membawa parameter `(novelId, chapterId)`.
-  * [ ] Status bookmark novel tersimpan secara reaktif ke database SQLite lokal saat tombol bookmark ditekan.
+  * [x] Layar detail novel terimplementasi menggunakan arsitektur FlatList tunggal tanpa drawer atau dialog bento-box terpisah.
+  * [x] Urutan bab kronologis sejati dipreservasi secara deterministik via `synced_chapter_ids` (mendukung nomor bab non-numerik, prolog 0, dan nomor bab ganda lintas volume).
+  * [x] Validasi respons API ketat (raw `novel.id === requestedId` sebelum normalisasi, `chapter.novelId === novel.id`, penolakan duplikasi ID bab, penolakan input non-kanonik tanpa trim diam-diam, preservasi subpath `mtl/`, `chapterNumber` terhingga).
+  * [x] Sinkronisasi katalog upstream tidak pernah menghapus bab lama yang tersimpan, tidak menimpa konten offline yang terunduh, dan mempertahankan status bookmark lokal serta riwayat progres baca.
+  * [x] Status bookmark dapat di-toggle bahkan sebelum sinkronisasi pertama selesai melalui upsert metadata minimal atomik dan verifikasi langsung sebelum deklarasi sukses (dengan rollback UI dua arah bila gagal).
+  * [x] Tombol bookmark hanya aktif setelah pembacaan status lokal selesai (`READY`), dilindungi penanda sesi non-reusable dan cleanup effect (termasuk skenario A -> B -> A), guard sinkron `isSavingBookmarkRef` mencegah mutasi ganda sebelum render, operasi sesi lama tidak dapat membuka lock sesi baru di blok finally, dan reload/sync lama tidak menimpa mutasi baru.
+  * [x] Isolasi transaksi atomik menggunakan `withExclusiveTransactionAsync` dengan seluruh query via objek `txn`, dikoordinasikan via mutex per `novelId`.
+  * [x] Pemeriksaan dan migrasi `synced_chapter_ids` async produksi terhubung langsung pada inisialisasi database di `sqlite.ts` dan teruji via adapter `node:sqlite` tanpa duplikasi kode migrasi khusus tes.
+  * [x] Pembatalan request `REQUEST_CANCELLED` tidak memicu banner error saat refresh, data sebelumnya tetap dipertahankan saat refresh gagal, dan tombol coba lagi serta refresh awal dilindungi guard sinkron `isRefreshingRef`.
+  * [x] Tombol toggle urutan membalik daftar bab secara visual murni tanpa memutasi data asli.
+  * [x] Tombol "Mulai Baca" / "Lanjut Baca" menggunakan helper produksi `resolveReadingTarget` untuk mendeteksi bab riwayat baca terakhir dari `chapter_reading_progress` dengan fallback yang aman.
+  * [x] Tombol "Unduh" secara jujur menginformasikan bahwa fitur unduhan offline belum tersedia (dialokasikan untuk Milestone 5).
+  * [x] Layar tetap menampilkan data dari API secara mulus meskipun penyimpanan SQLite lokal mengalami kegagalan.
+  * [x] Kode bundel client berhasil dikompilasi ke bytecode Hermes Android (`npx expo export --platform android`).
 * **Cara Verifikasi**:
-  * Buka novel "kimi-wa-boku-no-koukai-ln", periksa daftar bab terurut lengkap, dan coba balikkan urutan bab.
-* **Referensi Acuan**: [PRD.md: Seksi 3.1, 3.4, 8.3](file:///d:/project/yomou/docs/PRD.md), [anti-patterns-ui.md: Seksi 5.2](file:///d:/project/yomou/docs/anti-patterns-ui.md).
+  * Jalankan `npm run test:detail` (`node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./scripts/register-ts-loader.mjs --experimental-strip-types scripts/verify-novel-detail.mjs`) untuk memvalidasi 13 pengujian:
+    1. Migrasi async produksi langsung via adapter `node:sqlite` pada database lama dengan retensi data 100% dan idempoten (tanpa duplikasi migrasi sync khusus tes).
+    2. Inisialisasi database baru mengeksekusi DDL dan migrasi kolom tanpa galat.
+    3. Validasi ID kanonik ketat tanpa trim diam-diam (penolakan spasi tepi, colon, query/hash, karakter kontrol, segmen kosong, traversal; perbandingan raw `novel.id` sebelum normalisasi; penerimaan ID kanonik satu segmen dan subpath `mtl/` valid).
+    4. Determinisme urutan bab dan preservasi nomor ganda multi-volume light novel.
+    5. Pembedaan status belum tersinkronisasi (`null`) dari status katalog kosong sah (`[]`).
+    6. Deteksi snapshot JSON korup dan baris bab yang hilang di database sebagai `StorageError`.
+    7. Operasi bookmark sebelum sinkronisasi pertama selesai via atomic upsert dan verifikasi langsung.
+    8. Paksa kegagalan di tengah transaksi `syncNovelMetadata` produksi membuktikan rollback 100% (metadata, snapshot, dan bab kembali utuh ke kondisi sebelum transaksi).
+    9. Retensi bab lama yang di-drop oleh upstream, menjaga file offline dan progres baca tetap aman.
+    10. Mutex in-flight serialisasi eksekusi per `novelId`.
+    11. Pengujian fungsi pemilihan bab produksi (`resolveReadingTarget`), sorting toggle visual non-mutating, dan rollback UI dua arah (`applyBookmarkToggleFailure`).
+    12. Pengujian langsung kelas produksi `DetailLifecycleTracker`: penanda sesi non-reusable pada skenario A -> B -> A, penolakan hasil pembacaan/sync/bookmark/refresh sesi lama, proteksi lock di blok `finally`, guard sinkron ganda `isSavingBookmark` dan `isRefreshing`, serta proteksi state optimistik dari reload/sync basi.
+    13. Deklarasi batas pengujian otomatis Node.js vs pengujian runtime Android fisik.
+  * Jalankan `npm run test:sqlite`: Lolos skema dan integritas relasional SQLite.
+  * Jalankan `npm run test:search`: Lolos alur pencarian dan paginasi.
+  * Jalankan `npm run test:discover`: Lolos feed beranda dan error boundary.
+  * Jalankan `npm run typecheck:client` (`tsc --noEmit`): Lolos 0 galat.
+  * Jalankan `npm run check:contracts`: Lolos kesetaraan kontrak server–client 100%.
+  * Jalankan `npm run test:nav`: Lolos verifikasi navigasi.
+  * Jalankan `npm run test:theme`: Lolos kontras token AAA/AA dan aset offline.
+  * Jalankan `npx expo export --platform android` di `client`: Bundel bytecode Hermes (`.hbc`) berhasil dikompilasi (1348 modul, 3.5MB).
+  * *Batas Verifikasi Runtime Android (Tertunda)*:
+    - Pengujian Node.js membuktikan eksekusi SQL riil, integritas rollback transaksi, logika transisi state UI, validasi identitas kanonik, koordinasi mutex per novel, serta logika helper tracker produksi (`DetailLifecycleTracker`).
+    - Pengujian `DetailLifecycleTracker` merupakan bukti logika *pure helper class* produksi dan transisi token/lock, **BUKAN** pengujian *lifecycle* React yang sebenarnya (pohon komponen React, eksekusi hook `useEffect`, pembatalan render) ataupun interaksi Android langsung di perangkat fisik/emulator.
+    - Adapter `node:sqlite` membuktikan kebenaran alur logika SQL dan transaksi ACID di tingkat basis data, tetapi **BUKAN** bukti isolasi *thread-level locking* dari implementasi native `withExclusiveTransactionAsync` di Android runtime / JSI layer. BUKAN pula bukti render antarmuka UI visual di layar fisik, performa layout Android, atau eksekusi runtime engine Hermes di perangkat fisik/emulator.
+    - Seluruh pengujian interaksi Android berikut berstatus PENDING hingga pengujian di perangkat fisik/emulator:
+      1. Responsivitas target sentuh fisik $\ge 48\text{dp}$ pada layar sentuh fisik.
+      2. Perilaku reflow visual saat `width < 360` atau `fontScale >= 1.5` di layar perangkat nyata.
+      3. Kelancaran 60 FPS scrolling dan virtualisasi FlatList pada novel dengan ratusan bab.
+      4. Perilaku tombol hardware Back Android saat kembali ke layar Discover.
+      5. Pengumuman suara TalkBack Android untuk header detail, status bookmark, dan daftar bab.
+    - Sesuai prinsip verifikasi integritas, status `DIS-04` dicatat **`IN_PROGRESS`** bersama `FON-03`, `FON-04`, `FON-05`, `DIS-01`, `DIS-02`, dan `DIS-03` hingga pengujian di perangkat/emulator Android dapat dilaksanakan.
+* **Referensi Acuan**: [PRD.md: Seksi 3.1, 3.4, 8.3](file:///d:/project/yomou/docs/PRD.md), [anti-patterns-ui.md: Seksi 5.2](file:///d:/project/yomou/docs/anti-patterns-ui.md), [DetailSpec.md](file:///d:/project/yomou/client/src/screens/detail/DetailSpec.md).
 
 ---
 

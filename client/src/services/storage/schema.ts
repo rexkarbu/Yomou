@@ -18,6 +18,7 @@ export const SCHEMA_SQL = {
       status TEXT,
       total_chapters INTEGER DEFAULT 0,
       is_bookmarked INTEGER DEFAULT 0,
+      synced_chapter_ids TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
@@ -111,3 +112,18 @@ export const ALL_MIGRATIONS = [
   SCHEMA_SQL.createIndexReadingProgress,
   SCHEMA_SQL.createIndexDownloadQueue,
 ];
+
+/**
+ * Memastikan kolom synced_chapter_ids tersedia pada tabel novels secara idempoten (expo-sqlite).
+ * Jika tabel novels sudah ada sebelum migrasi kolom ini, jalankan ALTER TABLE.
+ */
+export async function ensureSyncedChapterIdsMigrationAsync(db: {
+  getAllAsync: (sql: string) => Promise<unknown[]>;
+  execAsync: (sql: string) => Promise<void>;
+}): Promise<void> {
+  const columns = (await db.getAllAsync('PRAGMA table_info(novels);')) as Array<{ name: string }>;
+  const hasColumn = columns.some((col) => col.name === 'synced_chapter_ids');
+  if (!hasColumn) {
+    await db.execAsync('ALTER TABLE novels ADD COLUMN synced_chapter_ids TEXT DEFAULT NULL;');
+  }
+}

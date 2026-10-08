@@ -20,6 +20,7 @@
     "test:nav": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/verify-navigation-setup.mjs",
     "test:discover": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./scripts/register-ts-loader.mjs --experimental-strip-types scripts/verify-discover-flow.mjs",
     "test:search": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./scripts/register-ts-loader.mjs --experimental-strip-types scripts/verify-search-flow.mjs",
+    "test:detail": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./scripts/register-ts-loader.mjs --experimental-strip-types scripts/verify-novel-detail.mjs",
     "test:cache": "npm run -w server build && node scripts/verify-cache.mjs",
     "test:http": "npm run -w server build && node scripts/verify-http-resilience.mjs",
     "test:provider-feeds": "npm run -w server build && node scripts/verify-meionovel-scraper.mjs",

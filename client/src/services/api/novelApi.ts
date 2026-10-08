@@ -1,5 +1,5 @@
 import { apiRequest, AppError, type RequestOptions } from './apiClient';
-import type { NovelSummary, NovelStatus } from '../../types/novel';
+import type { NovelSummary, NovelStatus, ChapterSummary, NovelDetail } from '../../types/novel';
 
 /**
  * Memvalidasi apakah sebuah entitas memiliki field inti NovelSummary yang sah.
@@ -20,7 +20,7 @@ export function validateNovelSummary(raw: unknown): NovelSummary {
   const item = raw as Record<string, unknown>;
 
   // Validasi field inti yang dibutuhkan antarmuka
-  if (typeof item.id !== 'string' || item.id.trim() === '') {
+  if (typeof item.id !== 'string' || !/^[a-z0-9_-]+$/.test(item.id)) {
     throw new AppError(
       'RESPONSE_MALFORMED',
       'Field inti "id" novel hilang atau tidak valid.',
@@ -51,7 +51,7 @@ export function validateNovelSummary(raw: unknown): NovelSummary {
   }
 
   const result: NovelSummary = {
-    id: item.id.trim(),
+    id: item.id,
     title: item.title.trim(),
     coverUrl: item.coverUrl.trim(),
   };
@@ -187,4 +187,176 @@ export async function searchNovels(
   }
 
   return response.data.map(validateNovelSummary);
+}
+
+/**
+ * Memvalidasi format slug novelId kanonik sebelum request.
+ * Format kanonik: Tepat satu segmen alfabet-numerik huruf kecil, angka, strip, atau garis bawah [a-z0-9_-]+.
+ * Menolak input tanpa trim atau mutasi diam-diam: whitespace tepi/tengah, slash, colon, query/hash, kontrol, traversal.
+ */
+export function validateNovelId(novelId: unknown): string {
+  if (typeof novelId !== 'string') {
+    throw new AppError('BAD_REQUEST', 'ID novel harus berupa string.', 400, null, true);
+  }
+  if (!/^[a-z0-9_-]+$/.test(novelId)) {
+    throw new AppError(
+      'BAD_REQUEST',
+      `ID novel tidak kanonik: "${novelId}". Harus berupa slug satu segmen [a-z0-9_-]+ tanpa whitespace, slash, atau karakter khusus.`,
+      400,
+      null,
+      true
+    );
+  }
+  return novelId;
+}
+
+/**
+ * Memvalidasi format chapterId kanonik.
+ * Format kanonik: Satu atau beberapa segmen [a-z0-9_-]+ yang dipisahkan oleh satu slash '/'.
+ * Menolak input tanpa trim: whitespace tepi/tengah, leading/trailing slash, empty segment '//',
+ * colon, query/hash, kontrol, traversal, backslash.
+ */
+export function validateChapterId(chapterId: unknown): string {
+  if (typeof chapterId !== 'string' || chapterId === '') {
+    throw new AppError('RESPONSE_MALFORMED', 'ID bab harus berupa string non-kosong.', 0, null, true);
+  }
+  if (chapterId.startsWith('/') || chapterId.endsWith('/')) {
+    throw new AppError('RESPONSE_MALFORMED', `ID bab tidak kanonik: diawali atau diakhiri slash: "${chapterId}".`, 0, null, true);
+  }
+  if (chapterId.includes('//')) {
+    throw new AppError('RESPONSE_MALFORMED', `ID bab tidak kanonik: segmen kosong terdeteksi: "${chapterId}".`, 0, null, true);
+  }
+  const segments = chapterId.split('/');
+  for (const seg of segments) {
+    if (!/^[a-z0-9_-]+$/.test(seg)) {
+      throw new AppError(
+        'RESPONSE_MALFORMED',
+        `ID bab tidak kanonik: segmen "${seg}" tidak valid pada "${chapterId}".`,
+        0,
+        null,
+        true
+      );
+    }
+  }
+  return chapterId;
+}
+
+/**
+ * Memvalidasi apakah sebuah entitas memiliki field ChapterSummary yang sah.
+ * Aturan Ketat:
+ * 1. id wajib kanonik (mempertahankan subpath mtl/, menolak .., //, leading/trailing slash, whitespace).
+ * 2. chapter.novelId WAJIB ada dan identik dengan expectedNovelId induknya (tanpa fallback diam-diam).
+ * 3. chapterNumber wajib berupa angka terhingga (finite number), menerima pecahan.
+ */
+export function validateChapterSummary(raw: unknown, expectedNovelId: string): ChapterSummary {
+  if (typeof raw !== 'object' || raw === null) {
+    throw new AppError('RESPONSE_MALFORMED', 'Item bab bukan merupakan objek valid.', 0, null, true);
+  }
+  const item = raw as Record<string, unknown>;
+
+  if (typeof item.id !== 'string') {
+    throw new AppError('RESPONSE_MALFORMED', 'Field "id" bab hilang atau bukan string.', 0, null, true);
+  }
+  const id = validateChapterId(item.id);
+
+  // Wajib novelId ada dan cocok dengan expectedNovelId tanpa fallback diam-diam
+  if (typeof item.novelId !== 'string' || item.novelId !== expectedNovelId) {
+    throw new AppError(
+      'RESPONSE_MALFORMED',
+      `chapter.novelId ("${String(item.novelId)}") tidak cocok dengan novel.id induk ("${expectedNovelId}").`,
+      0,
+      null,
+      true
+    );
+  }
+
+  if (typeof item.title !== 'string' || item.title.trim() === '') {
+    throw new AppError('RESPONSE_MALFORMED', 'Field "title" bab hilang atau kosong.', 0, null, true);
+  }
+
+  if (typeof item.chapterNumber !== 'number' || !Number.isFinite(item.chapterNumber)) {
+    throw new AppError('RESPONSE_MALFORMED', 'Field "chapterNumber" harus berupa angka terhingga.', 0, null, true);
+  }
+
+  const result: ChapterSummary = {
+    id,
+    novelId: expectedNovelId,
+    title: item.title.trim(),
+    chapterNumber: item.chapterNumber,
+  };
+
+  if (typeof item.releaseDate === 'string' && item.releaseDate.trim() !== '') {
+    result.releaseDate = item.releaseDate.trim();
+  }
+
+  return result;
+}
+
+/**
+ * Memvalidasi respons lengkap NovelDetail dari endpoint GET /api/novels/:novelId.
+ * Aturan Ketat:
+ * 1. Membandingkan raw novel.id dengan requestedNovelId sebelum normalisasi.
+ * 2. requestedNovelId wajib berupa ID kanonik yang sah.
+ * 3. chapters WAJIB berupa array.
+ * 4. Setiap chapter.novelId WAJIB sesuai requestedNovelId.
+ * 5. DILARANG ada duplikasi ID bab pada array chapters.
+ */
+export function validateNovelDetail(raw: unknown, requestedNovelId: string): NovelDetail {
+  if (typeof raw !== 'object' || raw === null) {
+    throw new AppError('RESPONSE_MALFORMED', 'Data respons detail novel bukan berupa objek.', 0, null, true);
+  }
+  const rawObj = raw as Record<string, unknown>;
+
+  // Bandingkan raw novel.id dengan requestedNovelId sebelum normalisasi
+  if (typeof rawObj.id !== 'string' || rawObj.id !== requestedNovelId) {
+    throw new AppError(
+      'RESPONSE_MALFORMED',
+      `ID novel dalam respons ("${String(rawObj.id)}") tidak sesuai dengan ID yang diminta ("${requestedNovelId}").`,
+      0,
+      null,
+      true
+    );
+  }
+
+  // Validasi ID kanonik
+  validateNovelId(requestedNovelId);
+
+  const summary = validateNovelSummary(raw);
+
+  if (!Array.isArray(rawObj.chapters)) {
+    throw new AppError('RESPONSE_MALFORMED', 'Field "chapters" pada respons detail bukan merupakan array.', 0, null, true);
+  }
+
+  const seenChapterIds = new Set<string>();
+  const chapters: ChapterSummary[] = [];
+
+  for (const rawChapter of rawObj.chapters) {
+    const chapter = validateChapterSummary(rawChapter, requestedNovelId);
+    if (seenChapterIds.has(chapter.id)) {
+      throw new AppError('RESPONSE_MALFORMED', `Ditemukan duplikasi ID bab "${chapter.id}" pada respons detail novel.`, 0, null, true);
+    }
+    seenChapterIds.add(chapter.id);
+    chapters.push(chapter);
+  }
+
+  return {
+    ...summary,
+    chapters,
+  };
+}
+
+/**
+ * Mengambil rincian novel dan seluruh daftar bab dari endpoint GET /api/novels/:novelId
+ */
+export async function getNovelDetail(
+  novelId: string,
+  options?: RequestOptions
+): Promise<NovelDetail> {
+  const safeNovelId = validateNovelId(novelId);
+  const response = await apiRequest<unknown>(
+    `/api/novels/${encodeURIComponent(safeNovelId)}`,
+    options
+  );
+
+  return validateNovelDetail(response.data, safeNovelId);
 }
